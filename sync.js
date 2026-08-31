@@ -21,13 +21,14 @@ async function sincronizarPrecios() {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ key: provider.apiKey, action: 'services' }),
+        signal: AbortSignal.timeout(30000), // nunca dejar el cron colgado si el proveedor no responde
       });
       const servicios = await resp.json();
       if (!Array.isArray(servicios)) {
         console.error(`[${provider.nombre}] Respuesta inesperada:`, servicios);
         continue;
       }
-      for (const s of servicios) await upsertServicio(provider.id, s);
+      await upsertServiciosBatch(provider.id, servicios);
       console.log(`[${provider.nombre}] Sincronizados ${servicios.length} servicios`);
     } catch (err) {
       console.error(`[${provider.nombre}] Error al sincronizar precios:`, err.message);
@@ -35,32 +36,44 @@ async function sincronizarPrecios() {
   }
 }
 
-async function upsertServicio(providerId, servicioProveedor) {
-  const { service: providerServiceId, rate, min, max } = servicioProveedor;
-  const costoProvider = parseFloat(rate);
+// Estos paneles listan miles de servicios (bestsmmprovider ~1.3k, smmcpan ~8k).
+// Un upsert fila por fila implica 2 round-trips por servicio (~18k+ queries).
+// Se hace por lotes con un solo INSERT ... ON CONFLICT por chunk.
+async function upsertServiciosBatch(providerId, servicios, chunkSize = 500) {
+  for (let i = 0; i < servicios.length; i += chunkSize) {
+    const chunk = servicios.slice(i, i + chunkSize);
+    const filas = [];
+    const params = [];
+    let idx = 1;
 
-  const existente = await pool.query(
-    `SELECT id, margen_multiplicador FROM services WHERE provider_id = $1 AND provider_service_id = $2`,
-    [providerId, providerServiceId]
-  );
+    for (const s of chunk) {
+      const costoProvider = parseFloat(s.rate);
+      filas.push(`($${idx++}, $${idx++}, 'sin_clasificar', 'sin_clasificar', $${idx++}, $${idx++}, 3.0, $${idx++}, $${idx++}, $${idx++}, false)`);
+      params.push(
+        providerId,
+        s.service,
+        s.name || 'Servicio sin nombre',
+        costoProvider,
+        costoProvider * 3.0,
+        s.min,
+        s.max
+      );
+    }
 
-  if (existente.rows.length > 0) {
-    const margen = parseFloat(existente.rows[0].margen_multiplicador);
-    const nuevoPrecio = costoProvider * margen;
-    await pool.query(
-      `UPDATE services SET costo_provider_por_1000 = $1, precio_creditos_por_1000 = $2,
-       cantidad_min = $3, cantidad_max = $4, ultima_sincronizacion = now() WHERE id = $5`,
-      [costoProvider, nuevoPrecio, min, max, existente.rows[0].id]
-    );
-  } else {
-    // Nuevo servicio del proveedor: se crea INACTIVO. Se activa desde el admin con nombre público y margen revisado.
     await pool.query(
       `INSERT INTO services
         (provider_id, provider_service_id, plataforma, tipo, nombre_publico,
          costo_provider_por_1000, margen_multiplicador, precio_creditos_por_1000,
          cantidad_min, cantidad_max, activo)
-       VALUES ($1, $2, 'sin_clasificar', 'sin_clasificar', $3, $4, 3.0, $5, $6, $7, false)`,
-      [providerId, providerServiceId, servicioProveedor.name || 'Servicio sin nombre', costoProvider, costoProvider * 3.0, min, max]
+       VALUES ${filas.join(', ')}
+       ON CONFLICT (provider_id, provider_service_id) DO UPDATE SET
+         costo_provider_por_1000 = EXCLUDED.costo_provider_por_1000,
+         -- se preserva el margen ya configurado del servicio existente, no el default 3.0
+         precio_creditos_por_1000 = EXCLUDED.costo_provider_por_1000 * services.margen_multiplicador,
+         cantidad_min = EXCLUDED.cantidad_min,
+         cantidad_max = EXCLUDED.cantidad_max,
+         ultima_sincronizacion = now()`,
+      params
     );
   }
 }
@@ -96,6 +109,7 @@ async function sincronizarEstadosOrdenes() {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams({ key: provider.apiKey, action: 'status', orders: ids }),
+        signal: AbortSignal.timeout(30000),
       });
       const estados = await resp.json();
 
