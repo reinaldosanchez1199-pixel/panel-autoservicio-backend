@@ -6,10 +6,16 @@
 require('dotenv').config();
 const pool = require('./db');
 
+// smmcpan pausado el 2026-09-01: la misma API key se usa en el child panel
+// worldklox.online, y sus pedidos dejaron de procesarse justo después de
+// empezar a probarla aquí también. Reactivar (quitar el filtro de abajo)
+// solo cuando soporte de smmcpan confirme que la key está bien.
+const SMMCPAN_PAUSADO = true;
+
 const PROVIDERS = [
   { id: 1, nombre: 'bestsmmprovider', apiUrl: 'https://bestsmmprovider.com/api/v2', apiKey: process.env.BESTSMM_API_KEY },
   { id: 2, nombre: 'smmcpan', apiUrl: 'https://smmcpan.com/api/v2', apiKey: process.env.SMMCPAN_API_KEY },
-];
+].filter((p) => !(p.nombre === 'smmcpan' && SMMCPAN_PAUSADO));
 
 // ---------------------------------------------
 // 1. SINCRONIZACIÓN DE PRECIOS Y SERVICIOS
