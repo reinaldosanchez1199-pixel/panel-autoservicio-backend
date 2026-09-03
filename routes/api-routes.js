@@ -17,9 +17,15 @@ const { verificarSesion, requiereAdmin } = require('../auth');
 router.get('/wallet', verificarSesion, async (req, res) => {
   const client = await pool.connect();
   const walletRes = await client.query('SELECT saldo_creditos FROM wallets WHERE user_id = $1', [req.userId]);
+  const consumidoRes = await client.query('SELECT creditos_consumidos_total FROM users WHERE id = $1', [req.userId]);
   const nivel = await obtenerDescuentoNivel(client, req.userId);
   client.release();
-  res.json({ saldo: walletRes.rows[0]?.saldo_creditos ?? 0, nivel: nivel.nombre, descuento_pct: nivel.descuento_pct });
+  res.json({
+    saldo: walletRes.rows[0]?.saldo_creditos ?? 0,
+    consumido: consumidoRes.rows[0]?.creditos_consumidos_total ?? 0,
+    nivel: nivel.nombre,
+    descuento_pct: nivel.descuento_pct,
+  });
 });
 
 router.get('/services', verificarSesion, async (req, res) => {
