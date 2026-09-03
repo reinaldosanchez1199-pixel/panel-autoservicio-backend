@@ -54,7 +54,7 @@ async function upsertServiciosBatch(providerId, servicios, chunkSize = 500) {
 
     for (const s of chunk) {
       const costoProvider = parseFloat(s.rate);
-      filas.push(`($${idx++}, $${idx++}, 'sin_clasificar', 'sin_clasificar', $${idx++}, $${idx++}, 3.0, $${idx++}, $${idx++}, $${idx++}, false)`);
+      filas.push(`($${idx++}, $${idx++}, 'sin_clasificar', 'sin_clasificar', $${idx++}, $${idx++}, 3.0, $${idx++}, $${idx++}, $${idx++}, false, $${idx++})`);
       params.push(
         providerId,
         s.service,
@@ -62,7 +62,8 @@ async function upsertServiciosBatch(providerId, servicios, chunkSize = 500) {
         costoProvider,
         costoProvider * 3.0,
         s.min,
-        s.max
+        s.max,
+        s.refill === true
       );
     }
 
@@ -70,7 +71,7 @@ async function upsertServiciosBatch(providerId, servicios, chunkSize = 500) {
       `INSERT INTO services
         (provider_id, provider_service_id, plataforma, tipo, nombre_publico,
          costo_provider_por_1000, margen_multiplicador, precio_creditos_por_1000,
-         cantidad_min, cantidad_max, activo)
+         cantidad_min, cantidad_max, activo, soporta_refill)
        VALUES ${filas.join(', ')}
        ON CONFLICT (provider_id, provider_service_id) DO UPDATE SET
          costo_provider_por_1000 = EXCLUDED.costo_provider_por_1000,
@@ -78,6 +79,7 @@ async function upsertServiciosBatch(providerId, servicios, chunkSize = 500) {
          precio_creditos_por_1000 = EXCLUDED.costo_provider_por_1000 * services.margen_multiplicador,
          cantidad_min = EXCLUDED.cantidad_min,
          cantidad_max = EXCLUDED.cantidad_max,
+         soporta_refill = EXCLUDED.soporta_refill,
          ultima_sincronizacion = now()`,
       params
     );

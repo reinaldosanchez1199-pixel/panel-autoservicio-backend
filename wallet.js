@@ -280,6 +280,43 @@ async function aprobarRecargaManual(recargaId, adminUserId) {
   }
 }
 
+/**
+ * El cliente pide la reposición de un item ya entregado (ej. bajaron los seguidores).
+ * La solicitud va directo al proveedor vía action=refill — nadie de Viralizame
+ * tiene que tocar nada manualmente. Solo se permite una vez por item, y solo si
+ * el servicio soporta refill según el proveedor.
+ */
+async function solicitarRefill(itemId, userId) {
+  const itemRes = await pool.query(
+    `SELECT oi.id AS item_id, oi.provider_order_id, oi.estado, oi.refill_solicitado_en,
+            s.soporta_refill, p.api_url, p.api_key
+     FROM order_items oi
+     JOIN orders o ON o.id = oi.order_id
+     JOIN services s ON s.id = oi.service_id
+     JOIN providers p ON p.id = s.provider_id
+     WHERE oi.id = $1 AND o.user_id = $2`,
+    [itemId, userId]
+  );
+  const item = itemRes.rows[0];
+  if (!item) throw new Error('Pedido no encontrado');
+  if (!item.soporta_refill) throw new Error('Este servicio no admite reposición');
+  if (item.estado !== 'completado') throw new Error('Solo se puede reponer un pedido ya completado');
+  if (item.refill_solicitado_en) throw new Error('Ya se solicitó una reposición para este pedido');
+  if (!item.provider_order_id) throw new Error('Este pedido no tiene referencia con el proveedor');
+
+  const resp = await fetch(item.api_url, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({ key: item.api_key, action: 'refill', order: item.provider_order_id }),
+    signal: AbortSignal.timeout(20000),
+  });
+  const data = await resp.json();
+  if (data.error) throw new Error(data.error);
+
+  await pool.query('UPDATE order_items SET refill_solicitado_en = now() WHERE id = $1', [itemId]);
+  return { ok: true, refillId: data.refill ?? null };
+}
+
 module.exports = {
   crearPedido,
   aplicarBundle,
@@ -288,4 +325,5 @@ module.exports = {
   aprobarRecargaManual,
   obtenerDescuentoNivel,
   actualizarEstadoAgregadoPedido,
+  solicitarRefill,
 };

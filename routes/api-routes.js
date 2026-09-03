@@ -7,7 +7,7 @@ const router = express.Router();
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/comprobantes/' });
 const pool = require('../db');
-const { crearPedido, aplicarBundle, enviarPedidoAProveedor, obtenerDescuentoNivel, aprobarRecargaManual } = require('../wallet');
+const { crearPedido, aplicarBundle, enviarPedidoAProveedor, obtenerDescuentoNivel, aprobarRecargaManual, solicitarRefill } = require('../wallet');
 const { verificarSesion, requiereAdmin } = require('../auth');
 
 // ---------------------------------------------
@@ -116,6 +116,36 @@ router.post('/orders/bundle', verificarSesion, async (req, res) => {
   try {
     const resultado = await aplicarBundle({ userId: req.userId, linkCliente, bundleId });
     enviarPedidoAProveedor(resultado.pedidoId).catch((err) => console.error('Error al enviar bundle:', err));
+    res.json(resultado);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Lista los pedidos del cliente con sus items (para la pestaña "Pedidos")
+router.get('/orders', verificarSesion, async (req, res) => {
+  const pedidosRes = await pool.query(
+    `SELECT id, estado, costo_total_creditos, descuento_aplicado_pct, creado_en
+     FROM orders WHERE user_id = $1 ORDER BY creado_en DESC LIMIT 30`,
+    [req.userId]
+  );
+  const pedidos = [];
+  for (const pedido of pedidosRes.rows) {
+    const itemsRes = await pool.query(
+      `SELECT oi.id, oi.cantidad, oi.costo_creditos, oi.estado,
+              oi.refill_solicitado_en, s.nombre_publico, s.tipo, s.soporta_refill
+       FROM order_items oi JOIN services s ON s.id = oi.service_id WHERE oi.order_id = $1`,
+      [pedido.id]
+    );
+    pedidos.push({ ...pedido, items: itemsRes.rows });
+  }
+  res.json(pedidos);
+});
+
+// El cliente solicita la reposición de un item ya entregado — va directo al proveedor.
+router.post('/orders/items/:itemId/refill', verificarSesion, async (req, res) => {
+  try {
+    const resultado = await solicitarRefill(req.params.itemId, req.userId);
     res.json(resultado);
   } catch (err) {
     res.status(400).json({ error: err.message });
