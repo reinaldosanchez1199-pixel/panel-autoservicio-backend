@@ -158,7 +158,7 @@ async function aplicarBundle({ userId, linkCliente, bundleId }) {
 async function enviarPedidoAProveedor(pedidoId) {
   const itemsRes = await pool.query(
     `SELECT oi.id AS item_id, oi.service_id, oi.cantidad, o.link_cliente,
-            s.provider_service_id, p.api_url, p.api_key
+            s.provider_service_id, s.cantidad_max, p.api_url, p.api_key
      FROM order_items oi
      JOIN orders o ON o.id = oi.order_id
      JOIN services s ON s.id = oi.service_id
@@ -169,6 +169,9 @@ async function enviarPedidoAProveedor(pedidoId) {
 
   for (const item of itemsRes.rows) {
     try {
+      // Se envía un 10% extra sobre lo comprado (misma práctica que viralizame.com)
+      // para compensar caídas naturales — nunca por encima del máximo del servicio.
+      const cantidadConBono = Math.min(item.cantidad_max, Math.round(item.cantidad * 1.1));
       const resp = await fetch(item.api_url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
@@ -177,7 +180,7 @@ async function enviarPedidoAProveedor(pedidoId) {
           action: 'add',
           service: item.provider_service_id,
           link: item.link_cliente,
-          quantity: item.cantidad,
+          quantity: cantidadConBono,
         }),
       });
       const data = await resp.json();
