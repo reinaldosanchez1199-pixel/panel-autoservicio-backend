@@ -249,6 +249,35 @@ router.post('/admin/recargas/:id/rechazar', verificarSesion, requiereAdmin, asyn
   res.json({ ok: true });
 });
 
+// Historial de pedidos de TODOS los clientes, para revisión o corrección
+// manual. ?email=algo filtra por coincidencia parcial (para buscar rápido).
+router.get('/admin/orders', verificarSesion, requiereAdmin, async (req, res) => {
+  const { email } = req.query;
+  const params = [];
+  let where = '';
+  if (email) {
+    params.push(`%${email}%`);
+    where = `WHERE u.email ILIKE $${params.length}`;
+  }
+  const pedidosRes = await pool.query(
+    `SELECT o.id, o.link_cliente, o.estado, o.costo_total_creditos, o.creado_en, u.email
+     FROM orders o JOIN users u ON u.id = o.user_id
+     ${where}
+     ORDER BY o.creado_en DESC LIMIT 100`,
+    params
+  );
+  const pedidos = [];
+  for (const pedido of pedidosRes.rows) {
+    const itemsRes = await pool.query(
+      `SELECT oi.id, oi.cantidad, oi.costo_creditos, oi.estado, s.nombre_publico, s.tipo, s.plataforma
+       FROM order_items oi JOIN services s ON s.id = oi.service_id WHERE oi.order_id = $1`,
+      [pedido.id]
+    );
+    pedidos.push({ ...pedido, items: itemsRes.rows });
+  }
+  res.json(pedidos);
+});
+
 router.get('/admin/services/pendientes', verificarSesion, requiereAdmin, async (req, res) => {
   const r = await pool.query(
     `SELECT id, plataforma, tipo, nombre_publico, costo_provider_por_1000, precio_creditos_por_1000
