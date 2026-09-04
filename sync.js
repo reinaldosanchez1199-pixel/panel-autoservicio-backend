@@ -146,7 +146,7 @@ async function sincronizarEstadosOrdenes() {
       for (const item of items) {
         const info = estados[item.provider_order_id];
         if (!info) continue;
-        await actualizarEstadoItem(item, info.status, reembolsarItem);
+        await actualizarEstadoItem(item, info.status, info.remains, reembolsarItem);
       }
     } catch (err) {
       console.error(`[${provider.nombre}] Error al consultar estados:`, err.message);
@@ -154,7 +154,7 @@ async function sincronizarEstadosOrdenes() {
   }
 }
 
-async function actualizarEstadoItem(item, statusProveedor, reembolsarItem) {
+async function actualizarEstadoItem(item, statusProveedor, remains, reembolsarItem) {
   const mapaEstados = {
     Completed: 'completado', 'In progress': 'procesando', Processing: 'procesando',
     Pending: 'procesando', Partial: 'completado', Canceled: 'error', Error: 'error',
@@ -164,7 +164,13 @@ async function actualizarEstadoItem(item, statusProveedor, reembolsarItem) {
   if (nuevoEstado === 'error') {
     await reembolsarItem(item.item_id, `Proveedor reportó estado: ${statusProveedor}`);
   } else {
-    await pool.query('UPDATE order_items SET estado = $1 WHERE id = $2', [nuevoEstado, item.item_id]);
+    // "remains" (lo que el proveedor aún no ha entregado) alimenta la barra de
+    // progreso del cliente — se guarda tal cual, sin normalizar, la resta la
+    // hace el frontend contra cantidad_enviada_proveedor.
+    await pool.query(
+      'UPDATE order_items SET estado = $1, restantes_proveedor = $2 WHERE id = $3',
+      [nuevoEstado, remains ?? null, item.item_id]
+    );
     // Recalcula el estado agregado del pedido header
     const { actualizarEstadoAgregadoPedido } = require('./wallet');
     await actualizarEstadoAgregadoPedido(item.order_id);

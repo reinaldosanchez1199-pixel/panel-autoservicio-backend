@@ -7,7 +7,7 @@ const router = express.Router();
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/comprobantes/' });
 const pool = require('../db');
-const { crearPedido, aplicarBundle, enviarPedidoAProveedor, obtenerDescuentoNivel, aprobarRecargaManual, solicitarRefill } = require('../wallet');
+const { crearPedido, aplicarBundle, enviarPedidoAProveedor, obtenerDescuentoNivel, aprobarRecargaManual, solicitarRefill, repetirItem } = require('../wallet');
 const { verificarSesion, requiereAdmin } = require('../auth');
 
 // ---------------------------------------------
@@ -133,7 +133,8 @@ router.get('/orders', verificarSesion, async (req, res) => {
   for (const pedido of pedidosRes.rows) {
     const itemsRes = await pool.query(
       `SELECT oi.id, oi.cantidad, oi.costo_creditos, oi.estado,
-              oi.refill_solicitado_en, s.nombre_publico, s.tipo, s.soporta_refill
+              oi.refill_solicitado_en, oi.cantidad_enviada_proveedor, oi.restantes_proveedor,
+              s.nombre_publico, s.tipo, s.soporta_refill
        FROM order_items oi JOIN services s ON s.id = oi.service_id WHERE oi.order_id = $1`,
       [pedido.id]
     );
@@ -146,6 +147,17 @@ router.get('/orders', verificarSesion, async (req, res) => {
 router.post('/orders/items/:itemId/refill', verificarSesion, async (req, res) => {
   try {
     const resultado = await solicitarRefill(req.params.itemId, req.userId);
+    res.json(resultado);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Repite un envío ya completado (mismo servicio/link/cantidad) — no existe
+// "cancelar" un pedido, esta es la acción posterior a un envío terminado.
+router.post('/orders/items/:itemId/repetir', verificarSesion, async (req, res) => {
+  try {
+    const resultado = await repetirItem(req.params.itemId, req.userId);
     res.json(resultado);
   } catch (err) {
     res.status(400).json({ error: err.message });

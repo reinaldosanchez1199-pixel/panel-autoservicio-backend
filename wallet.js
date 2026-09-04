@@ -232,8 +232,8 @@ async function enviarPedidoAProveedor(pedidoId) {
       if (data.error) throw new Error(data.error);
 
       await pool.query(
-        "UPDATE order_items SET provider_order_id = $1, estado = 'procesando' WHERE id = $2",
-        [data.order, item.item_id]
+        "UPDATE order_items SET provider_order_id = $1, estado = 'procesando', cantidad_enviada_proveedor = $2 WHERE id = $3",
+        [data.order, cantidadConBono, item.item_id]
       );
     } catch (err) {
       await reembolsarItem(item.item_id, `Fallo al enviar: ${err.message}`);
@@ -374,7 +374,7 @@ async function solicitarRefill(itemId, userId) {
   if (!item.soporta_refill) throw new Error('Este servicio no admite reposición');
   if (item.estado !== 'completado') throw new Error('Solo se puede reponer un pedido ya completado');
   if (item.refill_solicitado_en) throw new Error('Ya se solicitó una reposición para este pedido');
-  if (!item.provider_order_id) throw new Error('Este pedido no tiene referencia con el proveedor');
+  if (!item.provider_order_id) throw new Error('Este pedido todavía no se puede reponer, intenta en unos minutos');
 
   const resp = await fetch(item.api_url, {
     method: 'POST',
@@ -389,6 +389,32 @@ async function solicitarRefill(itemId, userId) {
   return { ok: true, refillId: data.refill ?? null };
 }
 
+/**
+ * Repite un envío ya completado: mismo servicio, mismo link y misma cantidad
+ * del pedido original, como un pedido nuevo — se cobra de nuevo en créditos
+ * (a precio/descuento vigentes) y se manda de inmediato al proveedor. No existe
+ * "cancelar" un pedido; esta es la única acción posterior a un envío.
+ */
+async function repetirItem(itemId, userId) {
+  const itemRes = await pool.query(
+    `SELECT oi.service_id, oi.cantidad, oi.estado, o.link_cliente, o.user_id
+     FROM order_items oi JOIN orders o ON o.id = oi.order_id
+     WHERE oi.id = $1`,
+    [itemId]
+  );
+  const item = itemRes.rows[0];
+  if (!item || item.user_id !== userId) throw new Error('Pedido no encontrado');
+  if (item.estado !== 'completado') throw new Error('Solo se puede repetir un envío ya completado');
+
+  const resultado = await crearPedido({
+    userId,
+    linkCliente: item.link_cliente,
+    items: [{ serviceId: item.service_id, cantidad: item.cantidad }],
+  });
+  enviarPedidoAProveedor(resultado.pedidoId).catch((err) => console.error('Error al enviar repetición:', err));
+  return resultado;
+}
+
 module.exports = {
   crearPedido,
   aplicarBundle,
@@ -398,4 +424,5 @@ module.exports = {
   obtenerDescuentoNivel,
   actualizarEstadoAgregadoPedido,
   solicitarRefill,
+  repetirItem,
 };
