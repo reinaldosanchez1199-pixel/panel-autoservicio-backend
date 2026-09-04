@@ -5,27 +5,64 @@
 
 const pool = require('./db');
 
-// Descuento por volumen: cada N unidades del mismo tipo de servicio suman un
-// 5% más de descuento en ESE pedido (no depende del historial del cliente,
-// se ve al instante). Tope de 5 niveles (25%) para que el margen siga sano
-// en pedidos enormes. Debe coincidir con el mismo mapa en Dashboard.jsx.
-const TIERS_DESCUENTO_CANTIDAD = {
-  Seguidores: 500,
-  Likes: 500,
-  Vistas: 4000,
-  'Alcance + Impresiones': 4000,
-  Guardados: 400,
-  Compartidos: 400,
-  Reposts: 120,
+// Descuento por volumen, en bandas progresivas (no depende del historial del
+// cliente, se ve al instante en el pedido). Cada banda define hasta qué
+// cantidad aplica, de cuánto en cuánto se suma el % dentro de esa banda, y
+// qué % suma cada tramo. El límite de una banda es el tamaño de tramo de la
+// siguiente. Debe coincidir con el mismo mapa en Dashboard.jsx.
+const BANDAS_DESCUENTO_CANTIDAD = {
+  Seguidores: [
+    { hasta: 2000, tramo: 500, pct: 3 },
+    { hasta: 5000, tramo: 2000, pct: 5 },
+    { hasta: Infinity, tramo: 5000, pct: 7 },
+  ],
+  Likes: [
+    { hasta: 2000, tramo: 500, pct: 3 },
+    { hasta: 5000, tramo: 2000, pct: 5 },
+    { hasta: Infinity, tramo: 5000, pct: 7 },
+  ],
+  Vistas: [
+    { hasta: 20000, tramo: 4000, pct: 3 },
+    { hasta: 50000, tramo: 20000, pct: 5 },
+    { hasta: Infinity, tramo: 50000, pct: 7 },
+  ],
+  Guardados: [
+    { hasta: 2000, tramo: 400, pct: 3 },
+    { hasta: 5000, tramo: 2000, pct: 5 },
+    { hasta: Infinity, tramo: 5000, pct: 7 },
+  ],
+  Compartidos: [
+    { hasta: 2000, tramo: 400, pct: 3 },
+    { hasta: 5000, tramo: 2000, pct: 5 },
+    { hasta: Infinity, tramo: 5000, pct: 7 },
+  ],
+  Reposts: [
+    { hasta: 360, tramo: 120, pct: 3 },
+    { hasta: 1000, tramo: 360, pct: 5 },
+    { hasta: Infinity, tramo: 1000, pct: 7 },
+  ],
 };
-const PCT_POR_TIER = 5;
-const MAX_TIERS_DESCUENTO = 5;
+const TOPE_DESCUENTO_CANTIDAD = 35; // margen de seguridad en pedidos enormes
 
 function descuentoPorCantidad(tipo, cantidad) {
-  const tier = TIERS_DESCUENTO_CANTIDAD[tipo];
-  if (!tier) return 0;
-  const tiers = Math.min(MAX_TIERS_DESCUENTO, Math.floor(cantidad / tier));
-  return tiers * PCT_POR_TIER;
+  const bandas = BANDAS_DESCUENTO_CANTIDAD[tipo];
+  if (!bandas) return 0;
+  let descuento = 0;
+  let desde = 0;
+  for (const banda of bandas) {
+    const tramoCubierto = Math.min(cantidad, banda.hasta) - desde;
+    if (tramoCubierto > 0) descuento += Math.floor(tramoCubierto / banda.tramo) * banda.pct;
+    if (cantidad <= banda.hasta) break;
+    desde = banda.hasta;
+  }
+  return Math.min(TOPE_DESCUENTO_CANTIDAD, descuento);
+}
+
+// El 10% de compensación (para contrarrestar caídas naturales) solo aplica a
+// seguidores/suscriptores — el resto de servicios (likes, vistas, guardados...)
+// son estables y no lo necesitan.
+function requiereCompensacion(tipo) {
+  return tipo === 'Seguidores';
 }
 
 /**
@@ -158,7 +195,7 @@ async function aplicarBundle({ userId, linkCliente, bundleId }) {
 async function enviarPedidoAProveedor(pedidoId) {
   const itemsRes = await pool.query(
     `SELECT oi.id AS item_id, oi.service_id, oi.cantidad, o.link_cliente,
-            s.provider_service_id, s.cantidad_max, p.api_url, p.api_key
+            s.provider_service_id, s.cantidad_max, s.tipo, p.api_url, p.api_key
      FROM order_items oi
      JOIN orders o ON o.id = oi.order_id
      JOIN services s ON s.id = oi.service_id
@@ -170,8 +207,11 @@ async function enviarPedidoAProveedor(pedidoId) {
   for (const item of itemsRes.rows) {
     try {
       // Se envía un 10% extra sobre lo comprado (misma práctica que viralizame.com)
-      // para compensar caídas naturales — nunca por encima del máximo del servicio.
-      const cantidadConBono = Math.min(item.cantidad_max, Math.round(item.cantidad * 1.1));
+      // para compensar caídas naturales — solo en seguidores/suscriptores, el
+      // resto de servicios son estables y no lo necesitan.
+      const cantidadConBono = requiereCompensacion(item.tipo)
+        ? Math.min(item.cantidad_max, Math.round(item.cantidad * 1.1))
+        : item.cantidad;
       const resp = await fetch(item.api_url, {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
