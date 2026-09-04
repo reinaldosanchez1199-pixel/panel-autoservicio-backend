@@ -29,7 +29,7 @@ const PROVIDERS = [
 // esté en esta lista antes de tocar la base de datos.
 const SERVICIOS_SEGUIDOS = {
   1: [1395, 1396, 3766], // bestsmmprovider: likes latinos F/M, seguidores tiktok
-  2: [22533, 13409, 18580, 21386, 21372, 23629, 22911, 18658, 22304], // smmcpan
+  2: [22533, 13409, 18580, 21386, 21372, 23629, 22911, 18658, 22304, 21709, 15595], // smmcpan (21709=seguidores IG, 15595=guardados IG)
 };
 
 // ---------------------------------------------
