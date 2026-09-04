@@ -5,6 +5,29 @@
 
 const pool = require('./db');
 
+// Descuento por volumen: cada N unidades del mismo tipo de servicio suman un
+// 5% más de descuento en ESE pedido (no depende del historial del cliente,
+// se ve al instante). Tope de 5 niveles (25%) para que el margen siga sano
+// en pedidos enormes. Debe coincidir con el mismo mapa en Dashboard.jsx.
+const TIERS_DESCUENTO_CANTIDAD = {
+  Seguidores: 500,
+  Likes: 500,
+  Vistas: 4000,
+  'Alcance + Impresiones': 4000,
+  Guardados: 400,
+  Compartidos: 400,
+  Reposts: 120,
+};
+const PCT_POR_TIER = 5;
+const MAX_TIERS_DESCUENTO = 5;
+
+function descuentoPorCantidad(tipo, cantidad) {
+  const tier = TIERS_DESCUENTO_CANTIDAD[tipo];
+  if (!tier) return 0;
+  const tiers = Math.min(MAX_TIERS_DESCUENTO, Math.floor(cantidad / tier));
+  return tiers * PCT_POR_TIER;
+}
+
 /**
  * Calcula el % de descuento del cliente según su consumo histórico.
  */
@@ -51,7 +74,7 @@ async function crearPedido({ userId, linkCliente, items, bundleId = null }) {
 
     for (const item of items) {
       const servicioRes = await client.query(
-        `SELECT id, precio_creditos_por_1000, cantidad_min, cantidad_max, activo
+        `SELECT id, tipo, precio_creditos_por_1000, cantidad_min, cantidad_max, activo
          FROM services WHERE id = $1`,
         [item.serviceId]
       );
@@ -62,8 +85,9 @@ async function crearPedido({ userId, linkCliente, items, bundleId = null }) {
         throw new Error(`Cantidad fuera de rango para el servicio ${item.serviceId}`);
       }
 
+      const descuentoTotalPct = Math.min(45, descuento_pct + descuentoPorCantidad(servicio.tipo, item.cantidad));
       const costoBase = (item.cantidad / 1000) * parseFloat(servicio.precio_creditos_por_1000);
-      const costoConDescuento = costoBase * (1 - descuento_pct / 100);
+      const costoConDescuento = costoBase * (1 - descuentoTotalPct / 100);
 
       itemsCalculados.push({ serviceId: item.serviceId, cantidad: item.cantidad, costo: costoConDescuento });
       costoTotal += costoConDescuento;
