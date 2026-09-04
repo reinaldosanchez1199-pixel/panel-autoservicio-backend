@@ -99,7 +99,8 @@ async function upsertServiciosBatch(providerId, servicios, chunkSize = 500) {
          costo_provider_por_1000 = EXCLUDED.costo_provider_por_1000,
          -- se preserva el margen ya configurado del servicio existente, no el default 3.0
          precio_creditos_por_1000 = EXCLUDED.costo_provider_por_1000 * ${CREDITOS_POR_USD} * services.margen_multiplicador,
-         cantidad_min = EXCLUDED.cantidad_min,
+         -- cantidad_min es una regla de negocio nuestra (no la del proveedor) — si se
+         -- tomara de EXCLUDED, cada sync de 4h borraría los ajustes manuales de mínimos.
          cantidad_max = EXCLUDED.cantidad_max,
          soporta_refill = EXCLUDED.soporta_refill,
          ultima_sincronizacion = now()`,

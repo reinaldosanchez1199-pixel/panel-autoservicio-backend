@@ -14,6 +14,12 @@ const { verificarSesion, requiereAdmin } = require('../auth');
 // CLIENTE — cuenta y catálogo
 // ---------------------------------------------
 
+router.get('/me', verificarSesion, async (req, res) => {
+  const r = await pool.query('SELECT email, nombre, creado_en, es_admin FROM users WHERE id = $1', [req.userId]);
+  if (r.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
+  res.json(r.rows[0]);
+});
+
 router.get('/wallet', verificarSesion, async (req, res) => {
   const client = await pool.connect();
   const walletRes = await client.query('SELECT saldo_creditos FROM wallets WHERE user_id = $1', [req.userId]);
