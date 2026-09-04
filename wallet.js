@@ -167,7 +167,7 @@ async function crearPedido({ userId, linkCliente, items, bundleId = null }) {
     await client.query(
       `INSERT INTO transactions (user_id, tipo, monto, saldo_resultante, referencia_orden, nota)
        VALUES ($1, 'consumo', $2, $3, $4, $5)`,
-      [userId, -costoTotal, nuevoSaldo, pedidoId, `Pedido ${items.length} item(s) · nivel ${nombreNivel}`]
+      [userId, -costoTotal, nuevoSaldo, pedidoId, items.length > 1 ? `Nueva campaña · ${items.length} servicios` : 'Nueva campaña']
     );
 
     await client.query('COMMIT');
@@ -245,8 +245,13 @@ async function enviarPedidoAProveedor(pedidoId) {
 
 /**
  * Reembolsa un item individual (no todo el pedido) y actualiza el estado agregado.
+ * "motivo" es para los logs del servidor (diagnóstico técnico) — nunca se le
+ * muestra al cliente tal cual, para no filtrar detalles de la integración
+ * con el proveedor (nombres de servicio, errores de API, etc.).
  */
 async function reembolsarItem(itemId, motivo) {
+  console.error(`Reembolso de item ${itemId}: ${motivo}`);
+  const NOTA_CLIENTE = 'No pudimos completar este servicio — créditos reembolsados automáticamente.';
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -274,7 +279,7 @@ async function reembolsarItem(itemId, motivo) {
     await client.query(
       `INSERT INTO transactions (user_id, tipo, monto, saldo_resultante, referencia_orden, nota)
        VALUES ($1, 'reembolso', $2, $3, $4, $5)`,
-      [item.user_id, item.costo_creditos, nuevoSaldo, item.order_id, motivo]
+      [item.user_id, item.costo_creditos, nuevoSaldo, item.order_id, NOTA_CLIENTE]
     );
 
     await client.query('COMMIT');
