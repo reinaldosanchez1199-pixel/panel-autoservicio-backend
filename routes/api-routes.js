@@ -240,7 +240,10 @@ router.patch('/admin/services/:id', verificarSesion, requiereAdmin, async (req, 
   const { nombrePublico, plataforma, tipo, margenMultiplicador, activo } = req.body;
   const servicioRes = await pool.query('SELECT costo_provider_por_1000 FROM services WHERE id = $1', [req.params.id]);
   const costo = parseFloat(servicioRes.rows[0].costo_provider_por_1000);
-  const nuevoPrecio = costo * parseFloat(margenMultiplicador);
+  // Los créditos valen ~$0.01 c/u ($10 = 1000 créditos) — sin este factor
+  // el precio quedaba en escala de dólares, casi regalando el servicio.
+  const CREDITOS_POR_USD = 100;
+  const nuevoPrecio = costo * CREDITOS_POR_USD * parseFloat(margenMultiplicador);
 
   await pool.query(
     `UPDATE services SET nombre_publico = $1, plataforma = $2, tipo = $3,

@@ -6,11 +6,16 @@
 require('dotenv').config();
 const pool = require('./db');
 
-// smmcpan pausado el 2026-09-01: la misma API key se usa en el child panel
-// worldklox.online, y sus pedidos dejaron de procesarse justo después de
-// empezar a probarla aquí también. Reactivar (quitar el filtro de abajo)
-// solo cuando soporte de smmcpan confirme que la key está bien.
-const SMMCPAN_PAUSADO = true;
+// smmcpan reactivado el 2026-09-03 con una nueva API key (la anterior se
+// pausó por un incidente con el child panel worldklox.online, ya resuelto).
+const SMMCPAN_PAUSADO = false;
+
+// Los Viral Credits valen ~$0.01 c/u (paquetes de recarga: $10 = 1000 créditos).
+// Sin este factor, precio_creditos_por_1000 quedaba en escala de dólares
+// (ej. 0.18 créditos por algo que cuesta $0.06 al proveedor con margen 3x),
+// prácticamente regalando el servicio. Con el factor, ese mismo ejemplo
+// queda en 18 créditos (~$0.18), acorde al margen real.
+const CREDITOS_POR_USD = 100;
 
 const PROVIDERS = [
   { id: 1, nombre: 'bestsmmprovider', apiUrl: 'https://bestsmmprovider.com/api/v2', apiKey: process.env.BESTSMM_API_KEY },
@@ -60,7 +65,7 @@ async function upsertServiciosBatch(providerId, servicios, chunkSize = 500) {
         s.service,
         s.name || 'Servicio sin nombre',
         costoProvider,
-        costoProvider * 3.0,
+        costoProvider * CREDITOS_POR_USD * 3.0,
         s.min,
         s.max,
         s.refill === true
@@ -76,7 +81,7 @@ async function upsertServiciosBatch(providerId, servicios, chunkSize = 500) {
        ON CONFLICT (provider_id, provider_service_id) DO UPDATE SET
          costo_provider_por_1000 = EXCLUDED.costo_provider_por_1000,
          -- se preserva el margen ya configurado del servicio existente, no el default 3.0
-         precio_creditos_por_1000 = EXCLUDED.costo_provider_por_1000 * services.margen_multiplicador,
+         precio_creditos_por_1000 = EXCLUDED.costo_provider_por_1000 * ${CREDITOS_POR_USD} * services.margen_multiplicador,
          cantidad_min = EXCLUDED.cantidad_min,
          cantidad_max = EXCLUDED.cantidad_max,
          soporta_refill = EXCLUDED.soporta_refill,
