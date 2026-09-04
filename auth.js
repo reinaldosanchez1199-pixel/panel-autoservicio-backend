@@ -4,10 +4,12 @@
 
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const { OAuth2Client } = require('google-auth-library');
 const pool = require('./db');
 
 const JWT_SECRET = process.env.JWT_SECRET; // obligatorio, generar uno largo y aleatorio
 const JWT_EXPIRA = '7d';
+const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // ---------------------------------------------
 // Registro
@@ -65,6 +67,9 @@ async function login(req, res) {
 
     const user = r.rows[0];
     if (!user.activo) return res.status(403).json({ error: 'Cuenta desactivada' });
+    if (!user.password_hash) {
+      return res.status(400).json({ error: 'Esta cuenta se creó con Google — inicia sesión con el botón de Google' });
+    }
 
     const valido = await bcrypt.compare(password, user.password_hash);
     if (!valido) return res.status(401).json({ error: 'Credenciales inválidas' });
@@ -74,6 +79,57 @@ async function login(req, res) {
   } catch (err) {
     console.error('Error en /auth/login:', err.message);
     res.status(500).json({ error: 'Error al iniciar sesión' });
+  }
+}
+
+// ---------------------------------------------
+// Login / registro con Google — un mismo botón cubre ambos casos: si el
+// email ya existe se inicia sesión, si no existe se crea la cuenta (sin
+// contraseña, queda ligada a su cuenta de Google).
+// ---------------------------------------------
+async function loginGoogle(req, res) {
+  try {
+    const { credential } = req.body;
+    if (!credential) return res.status(400).json({ error: 'Falta el token de Google' });
+
+    const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: process.env.GOOGLE_CLIENT_ID });
+    const payload = ticket.getPayload();
+    const email = payload.email;
+    const nombre = payload.name || null;
+
+    const existente = await pool.query('SELECT id, es_admin, activo FROM users WHERE email = $1', [email]);
+
+    let userId, esAdmin;
+    if (existente.rows.length > 0) {
+      const user = existente.rows[0];
+      if (!user.activo) return res.status(403).json({ error: 'Cuenta desactivada' });
+      userId = user.id;
+      esAdmin = user.es_admin;
+    } else {
+      const client = await pool.connect();
+      try {
+        await client.query('BEGIN');
+        const userRes = await client.query(
+          'INSERT INTO users (email, password_hash, nombre) VALUES ($1, NULL, $2) RETURNING id',
+          [email, nombre]
+        );
+        userId = userRes.rows[0].id;
+        await client.query('INSERT INTO wallets (user_id, saldo_creditos) VALUES ($1, 0)', [userId]);
+        await client.query('COMMIT');
+        esAdmin = false;
+      } catch (err) {
+        await client.query('ROLLBACK');
+        throw err;
+      } finally {
+        client.release();
+      }
+    }
+
+    const token = jwt.sign({ userId, esAdmin }, JWT_SECRET, { expiresIn: JWT_EXPIRA });
+    res.json({ token });
+  } catch (err) {
+    console.error('Error en /auth/google:', err.message);
+    res.status(401).json({ error: 'No se pudo verificar la cuenta de Google' });
   }
 }
 
@@ -104,7 +160,7 @@ function requiereAdmin(req, res, next) {
   next();
 }
 
-module.exports = { registrar, login, verificarSesion, requiereAdmin };
+module.exports = { registrar, login, loginGoogle, verificarSesion, requiereAdmin };
 
 // ---------------------------------------------
 // Nota: agregar a schema.sql
