@@ -199,18 +199,21 @@ router.get('/activity', verificarSesion, async (req, res) => {
 // CLIENTE — recargas manuales (ahora por paquete, con bono)
 // ---------------------------------------------
 
+// El comprobante es opcional a propósito: el cliente ya lo manda por
+// WhatsApp (donde el admin lo ve y lo revisa antes de aprobar); esto solo
+// crea el registro "ya pagué" que aparece en el Panel Admin para aprobar.
 router.post('/recargas/manual', verificarSesion, upload.single('comprobante'), async (req, res) => {
-  const { paqueteId } = req.body;
-  if (!req.file || !paqueteId) return res.status(400).json({ error: 'Falta el comprobante o el paquete' });
+  const { paqueteId, metodo } = req.body;
+  if (!paqueteId) return res.status(400).json({ error: 'Falta el paquete' });
 
   const paqueteRes = await pool.query('SELECT precio_usd, creditos_otorgados FROM paquetes_recarga WHERE id = $1', [paqueteId]);
   if (paqueteRes.rows.length === 0) return res.status(400).json({ error: 'Paquete inválido' });
   const paquete = paqueteRes.rows[0];
 
   const r = await pool.query(
-    `INSERT INTO recargas_manuales (user_id, paquete_id, monto_declarado, creditos_a_acreditar, comprobante_url)
-     VALUES ($1, $2, $3, $4, $5) RETURNING id`,
-    [req.userId, paqueteId, paquete.precio_usd, paquete.creditos_otorgados, req.file.path]
+    `INSERT INTO recargas_manuales (user_id, paquete_id, monto_declarado, creditos_a_acreditar, comprobante_url, metodo)
+     VALUES ($1, $2, $3, $4, $5, $6) RETURNING id`,
+    [req.userId, paqueteId, paquete.precio_usd, paquete.creditos_otorgados, req.file?.path || null, metodo || null]
   );
   res.json({ recargaId: r.rows[0].id, estado: 'pendiente', creditosAAcreditar: paquete.creditos_otorgados });
 });
@@ -222,7 +225,7 @@ router.post('/recargas/manual', verificarSesion, upload.single('comprobante'), a
 router.get('/admin/recargas', verificarSesion, requiereAdmin, async (req, res) => {
   const r = await pool.query(
     `SELECT rm.id, rm.user_id, u.email, rm.monto_declarado, rm.creditos_a_acreditar,
-            rm.comprobante_url, rm.creado_en
+            rm.comprobante_url, rm.metodo, rm.creado_en
      FROM recargas_manuales rm JOIN users u ON u.id = rm.user_id
      WHERE rm.estado = 'pendiente' ORDER BY rm.creado_en ASC`
   );
