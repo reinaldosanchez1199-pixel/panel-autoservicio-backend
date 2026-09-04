@@ -131,7 +131,7 @@ router.post('/orders/bundle', verificarSesion, async (req, res) => {
 // Lista los pedidos del cliente con sus items (para la pestaña "Pedidos")
 router.get('/orders', verificarSesion, async (req, res) => {
   const pedidosRes = await pool.query(
-    `SELECT id, estado, costo_total_creditos, descuento_aplicado_pct, creado_en
+    `SELECT id, link_cliente, estado, costo_total_creditos, descuento_aplicado_pct, creado_en
      FROM orders WHERE user_id = $1 ORDER BY creado_en DESC LIMIT 30`,
     [req.userId]
   );
