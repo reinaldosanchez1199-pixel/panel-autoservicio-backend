@@ -22,6 +22,16 @@ const PROVIDERS = [
   { id: 2, nombre: 'smmcpan', apiUrl: 'https://smmcpan.com/api/v2', apiKey: process.env.SMMCPAN_API_KEY },
 ].filter((p) => !(p.nombre === 'smmcpan' && SMMCPAN_PAUSADO));
 
+// Solo se siguen (y se guardan en nuestra base) los servicios que realmente
+// se usan — NO el catálogo completo del proveedor (miles de servicios).
+// La API de estos paneles no tiene "traer un solo servicio por ID", así que
+// igual hay que pedir el catálogo completo, pero se descarta todo lo que no
+// esté en esta lista antes de tocar la base de datos.
+const SERVICIOS_SEGUIDOS = {
+  1: [1395, 1396, 3766], // bestsmmprovider: likes latinos F/M, seguidores tiktok
+  2: [22533, 13409, 18580, 21386, 21372, 23629, 22911, 18658, 22304], // smmcpan
+};
+
 // ---------------------------------------------
 // 1. SINCRONIZACIÓN DE PRECIOS Y SERVICIOS
 // ---------------------------------------------
@@ -34,13 +44,15 @@ async function sincronizarPrecios() {
         body: new URLSearchParams({ key: provider.apiKey, action: 'services' }),
         signal: AbortSignal.timeout(30000), // nunca dejar el cron colgado si el proveedor no responde
       });
-      const servicios = await resp.json();
-      if (!Array.isArray(servicios)) {
-        console.error(`[${provider.nombre}] Respuesta inesperada:`, servicios);
+      const todos = await resp.json();
+      if (!Array.isArray(todos)) {
+        console.error(`[${provider.nombre}] Respuesta inesperada:`, todos);
         continue;
       }
+      const seguidos = new Set(SERVICIOS_SEGUIDOS[provider.id] || []);
+      const servicios = todos.filter((s) => seguidos.has(Number(s.service)));
       await upsertServiciosBatch(provider.id, servicios);
-      console.log(`[${provider.nombre}] Sincronizados ${servicios.length} servicios`);
+      console.log(`[${provider.nombre}] Sincronizados ${servicios.length}/${seguidos.size} servicios seguidos`);
     } catch (err) {
       console.error(`[${provider.nombre}] Error al sincronizar precios:`, err.message);
     }
