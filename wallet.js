@@ -116,7 +116,7 @@ async function crearPedido({ userId, linkCliente, items, bundleId = null }) {
 
     for (const item of items) {
       const servicioRes = await client.query(
-        `SELECT id, tipo, precio_creditos_por_1000, cantidad_min, cantidad_max, activo
+        `SELECT id, tipo, plataforma, nombre_publico, precio_creditos_por_1000, cantidad_min, cantidad_max, activo
          FROM services WHERE id = $1`,
         [item.serviceId]
       );
@@ -131,7 +131,13 @@ async function crearPedido({ userId, linkCliente, items, bundleId = null }) {
       const costoBase = (item.cantidad / 1000) * parseFloat(servicio.precio_creditos_por_1000);
       const costoConDescuento = costoBase * (1 - descuentoTotalPct / 100);
 
-      itemsCalculados.push({ serviceId: item.serviceId, cantidad: item.cantidad, costo: costoConDescuento });
+      itemsCalculados.push({
+        serviceId: item.serviceId,
+        cantidad: item.cantidad,
+        costo: costoConDescuento,
+        plataforma: servicio.plataforma,
+        nombre_publico: servicio.nombre_publico,
+      });
       costoTotal += costoConDescuento;
     }
 
@@ -164,10 +170,15 @@ async function crearPedido({ userId, linkCliente, items, bundleId = null }) {
       itemsCreados.push({ itemId: itemRes.rows[0].id, ...item });
     }
 
+    // Nota descriptiva real (ej. "100 Likes Latinos Femeninos · Instagram") en vez de un
+    // genérico "Nueva campaña" — el cliente necesita saber qué pidió en cada uno.
+    const notaPedido = itemsCalculados.length === 1
+      ? `${itemsCalculados[0].cantidad.toLocaleString()} ${itemsCalculados[0].nombre_publico} · ${itemsCalculados[0].plataforma}`
+      : `${[...new Set(itemsCalculados.map((i) => i.plataforma))].join(' + ')} · ${itemsCalculados.length} servicios`;
     await client.query(
       `INSERT INTO transactions (user_id, tipo, monto, saldo_resultante, referencia_orden, nota)
        VALUES ($1, 'consumo', $2, $3, $4, $5)`,
-      [userId, -costoTotal, nuevoSaldo, pedidoId, items.length > 1 ? `Nueva campaña · ${items.length} servicios` : 'Nueva campaña']
+      [userId, -costoTotal, nuevoSaldo, pedidoId, notaPedido]
     );
 
     await client.query('COMMIT');
