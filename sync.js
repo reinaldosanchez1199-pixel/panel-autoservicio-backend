@@ -146,7 +146,11 @@ async function sincronizarEstadosOrdenes() {
 
       for (const item of items) {
         const info = estados[item.provider_order_id];
-        if (!info) continue;
+        if (!info) {
+          console.error(`[${provider.nombre}] Sin respuesta de estado para el pedido ${item.provider_order_id} (item ${item.item_id})`);
+          continue;
+        }
+        console.log(`[${provider.nombre}] item ${item.item_id} (orden ${item.provider_order_id}): status=${info.status} remains=${info.remains}`);
         await actualizarEstadoItem(item, info.status, info.remains, reembolsarItem);
       }
     } catch (err) {
