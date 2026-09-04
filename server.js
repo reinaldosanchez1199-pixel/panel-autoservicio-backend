@@ -11,7 +11,9 @@ const { chat: chatIA, limitadorIA } = require('./ia');
 
 const app = express();
 app.use(cors());
-app.use(express.json());
+// Límite subido de 100kb (default) a 10mb — Viralizame IA acepta capturas de
+// pantalla (perfil/publicación) en base64 dentro del body JSON.
+app.use(express.json({ limit: '10mb' }));
 
 // Rutas públicas
 app.post('/auth/registro', registrar);

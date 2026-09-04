@@ -26,6 +26,11 @@ const BANDAS_DESCUENTO_CANTIDAD = {
     { hasta: 50000, tramo: 20000, pct: 5 },
     { hasta: Infinity, tramo: 50000, pct: 7 },
   ],
+  'Alcance + Impresiones': [
+    { hasta: 20000, tramo: 4000, pct: 3 },
+    { hasta: 50000, tramo: 20000, pct: 5 },
+    { hasta: Infinity, tramo: 50000, pct: 7 },
+  ],
   Guardados: [
     { hasta: 2000, tramo: 400, pct: 3 },
     { hasta: 5000, tramo: 2000, pct: 5 },
