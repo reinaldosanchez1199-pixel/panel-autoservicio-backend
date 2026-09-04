@@ -377,7 +377,7 @@ async function aprobarRecargaManual(recargaId, adminUserId) {
 async function solicitarRefill(itemId, userId) {
   const itemRes = await pool.query(
     `SELECT oi.id AS item_id, oi.provider_order_id, oi.estado, oi.refill_solicitado_en,
-            s.soporta_refill, p.api_url, p.api_key
+            s.soporta_refill, s.tipo, p.api_url, p.api_key
      FROM order_items oi
      JOIN orders o ON o.id = oi.order_id
      JOIN services s ON s.id = oi.service_id
@@ -387,7 +387,9 @@ async function solicitarRefill(itemId, userId) {
   );
   const item = itemRes.rows[0];
   if (!item) throw new Error('Pedido no encontrado');
-  if (!item.soporta_refill) throw new Error('Este servicio no admite reposición');
+  // Reposición solo para Seguidores/Suscriptores — el resto de servicios son
+  // estables y no la necesitan, aunque el proveedor técnicamente la soporte.
+  if (!item.soporta_refill || !requiereCompensacion(item.tipo)) throw new Error('Este servicio no admite reposición');
   if (item.estado !== 'completado') throw new Error('Solo se puede reponer un pedido ya completado');
   if (item.refill_solicitado_en) throw new Error('Ya se solicitó una reposición para este pedido');
   if (!item.provider_order_id) throw new Error('Este pedido todavía no se puede reponer, intenta en unos minutos');
