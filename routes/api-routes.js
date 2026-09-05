@@ -269,7 +269,9 @@ router.get('/admin/orders', verificarSesion, requiereAdmin, async (req, res) => 
   const pedidos = [];
   for (const pedido of pedidosRes.rows) {
     const itemsRes = await pool.query(
-      `SELECT oi.id, oi.cantidad, oi.costo_creditos, oi.estado, s.nombre_publico, s.tipo, s.plataforma
+      `SELECT oi.id, oi.cantidad, oi.costo_creditos, oi.estado, oi.provider_order_id,
+              oi.cantidad_enviada_proveedor, oi.restantes_proveedor,
+              s.nombre_publico, s.tipo, s.plataforma
        FROM order_items oi JOIN services s ON s.id = oi.service_id WHERE oi.order_id = $1`,
       [pedido.id]
     );
