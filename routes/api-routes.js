@@ -37,7 +37,7 @@ router.get('/wallet', verificarSesion, async (req, res) => {
 router.get('/services', verificarSesion, async (req, res) => {
   const r = await pool.query(
     `SELECT id, plataforma, tipo, nombre_publico, precio_creditos_por_1000, cantidad_min, cantidad_max, dias_garantia
-     FROM services WHERE activo = true ORDER BY plataforma, tipo`
+     FROM services WHERE activo = true ORDER BY plataforma, tipo, nombre_publico`
   );
   res.json(r.rows);
 });

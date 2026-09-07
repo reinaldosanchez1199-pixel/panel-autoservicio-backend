@@ -21,7 +21,7 @@ const BANDAS_DESCUENTO_CANTIDAD = {
     { hasta: 5000, tramo: 2000, pct: 5 },
     { hasta: Infinity, tramo: 5000, pct: 7 },
   ],
-  Vistas: [
+  Reproducciones: [
     { hasta: 20000, tramo: 4000, pct: 3 },
     { hasta: 50000, tramo: 20000, pct: 5 },
     { hasta: Infinity, tramo: 50000, pct: 7 },
