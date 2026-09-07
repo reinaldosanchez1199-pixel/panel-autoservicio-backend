@@ -82,11 +82,17 @@ function bonoVariacion() {
   return 1 + (0.05 + Math.random() * 0.05);
 }
 
-// Combo "impulsa tu publicación completa" — comprar estos 4 tipos juntos en el
-// mismo pedido da 20% de descuento (ver crearPedido). Reproducciones es
-// opcional: si se agrega, también recibe el 20%, pero no hace falta para
-// activar el combo.
-const TIPOS_COMBO_PUBLICACION = ['Likes', 'Guardados', 'Compartidos', 'Reposts'];
+// Combo "impulsa tu publicación completa" — comprar juntos, en el mismo
+// pedido, todos los tipos que exige la plataforma da 20% de descuento (ver
+// crearPedido). Los requisitos varían por plataforma porque el catálogo real
+// de servicios varía por plataforma (ej. TikTok no tiene Repost; Facebook no
+// tiene Guardados/Compartidos). En Instagram, Reproducciones es opcional: si
+// se agrega también recibe el 20%, pero no hace falta para activar el combo.
+const REGLAS_COMBO_PUBLICACION = {
+  Instagram: ['Likes', 'Guardados', 'Compartidos', 'Reposts'],
+  TikTok: ['Likes', 'Guardados', 'Compartidos', 'Reproducciones'],
+  Facebook: ['Likes', 'Reproducciones'],
+};
 
 /**
  * Calcula el % de descuento del cliente según su consumo histórico.
@@ -160,11 +166,13 @@ async function crearPedido({ userId, linkCliente, items, bundleId = null }) {
       costoTotal += costoConDescuento;
     }
 
-    // Combo de publicación: si el pedido trae Likes + Guardados + Compartidos +
-    // Repost (Reproducciones es opcional y también entra al descuento si está),
-    // se premia con 20% adicional por comprar todo junto en vez de por separado.
+    // Combo de publicación: si el pedido trae todos los tipos que exige la
+    // plataforma (ver REGLAS_COMBO_PUBLICACION), se premia con 20% adicional
+    // por comprar todo junto en vez de por separado. Se asume una sola
+    // plataforma por pedido, que es como Impulsar arma cada fila.
     const tiposPresentes = new Set(itemsCalculados.map((i) => i.tipo));
-    const esComboPublicacion = TIPOS_COMBO_PUBLICACION.every((t) => tiposPresentes.has(t));
+    const requeridosCombo = REGLAS_COMBO_PUBLICACION[itemsCalculados[0]?.plataforma];
+    const esComboPublicacion = !!requeridosCombo && requeridosCombo.every((t) => tiposPresentes.has(t));
     if (esComboPublicacion) {
       costoTotal = 0;
       for (const item of itemsCalculados) {
@@ -217,6 +225,118 @@ async function crearPedido({ userId, linkCliente, items, bundleId = null }) {
 
     await client.query('COMMIT');
     return { pedidoId, costoTotal, nuevoSaldo, nombreNivel, descuento_pct, items: itemsCreados };
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// Impulsar 3 o más cuentas en el mismo envío (sección Impulsar en lote) da un
+// 10% adicional sobre el total — se calcula server-side igual que el combo de
+// publicación, nunca se confía en un porcentaje que mande el cliente.
+const MINIMO_CUENTAS_LOTE = 3;
+const DESCUENTO_LOTE_PCT = 10;
+
+/**
+ * Crea varios pedidos independientes (un link distinto por fila, ej. varias
+ * cuentas de seguidores) como una sola operación atómica. Si son 3 o más
+ * filas, se aplica el descuento de lote sobre todos los items.
+ * filas = [{ linkCliente, items: [{ serviceId, cantidad }] }, ...]
+ */
+async function crearPedidosEnLote({ userId, filas }) {
+  if (!filas || filas.length === 0) throw new Error('El lote necesita al menos una fila');
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const walletRes = await client.query('SELECT saldo_creditos FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+    if (walletRes.rows.length === 0) throw new Error('Wallet no encontrado');
+    let saldoCorriente = parseFloat(walletRes.rows[0].saldo_creditos);
+
+    const { descuento_pct } = await obtenerDescuentoNivel(client, userId);
+    const descuentoLotePct = filas.length >= MINIMO_CUENTAS_LOTE ? DESCUENTO_LOTE_PCT : 0;
+
+    const filasCalculadas = [];
+    let costoTotalLote = 0;
+
+    for (const fila of filas) {
+      if (!fila.items || fila.items.length === 0) throw new Error('Cada fila del lote necesita al menos un item');
+      const itemsCalculados = [];
+      let costoFila = 0;
+
+      for (const item of fila.items) {
+        const servicioRes = await client.query(
+          `SELECT id, tipo, plataforma, nombre_publico, precio_creditos_por_1000, cantidad_min, cantidad_max, activo
+           FROM services WHERE id = $1`,
+          [item.serviceId]
+        );
+        if (servicioRes.rows.length === 0) throw new Error(`Servicio ${item.serviceId} no encontrado`);
+        const servicio = servicioRes.rows[0];
+        if (!servicio.activo) throw new Error(`Servicio ${item.serviceId} no disponible`);
+        if (item.cantidad < servicio.cantidad_min || item.cantidad > servicio.cantidad_max) {
+          throw new Error(`Cantidad fuera de rango para el servicio ${item.serviceId}`);
+        }
+
+        const descuentoTotalPct = Math.min(45, descuento_pct + descuentoPorCantidad(servicio.tipo, item.cantidad));
+        const costoBase = (item.cantidad / 1000) * parseFloat(servicio.precio_creditos_por_1000);
+        let costoConDescuento = costoBase * (1 - descuentoTotalPct / 100);
+        if (descuentoLotePct > 0) costoConDescuento *= 1 - descuentoLotePct / 100;
+
+        itemsCalculados.push({
+          serviceId: item.serviceId,
+          cantidad: item.cantidad,
+          costo: costoConDescuento,
+          plataforma: servicio.plataforma,
+          nombre_publico: servicio.nombre_publico,
+        });
+        costoFila += costoConDescuento;
+      }
+
+      filasCalculadas.push({ linkCliente: fila.linkCliente, itemsCalculados, costoFila });
+      costoTotalLote += costoFila;
+    }
+
+    if (saldoCorriente < costoTotalLote) throw new Error('Saldo insuficiente');
+
+    await client.query('UPDATE users SET creditos_consumidos_total = creditos_consumidos_total + $1 WHERE id = $2', [costoTotalLote, userId]);
+
+    const pedidoIds = [];
+    for (const fila of filasCalculadas) {
+      saldoCorriente -= fila.costoFila;
+      const pedidoRes = await client.query(
+        `INSERT INTO orders (user_id, link_cliente, costo_total_creditos, descuento_aplicado_pct, estado)
+         VALUES ($1, $2, $3, $4, 'pendiente') RETURNING id`,
+        [userId, fila.linkCliente, fila.costoFila, descuento_pct + descuentoLotePct]
+      );
+      const pedidoId = pedidoRes.rows[0].id;
+
+      for (const item of fila.itemsCalculados) {
+        await client.query(
+          `INSERT INTO order_items (order_id, service_id, cantidad, costo_creditos, estado)
+           VALUES ($1, $2, $3, $4, 'pendiente')`,
+          [pedidoId, item.serviceId, item.cantidad, item.costo]
+        );
+      }
+
+      const notaPedido = descuentoLotePct > 0
+        ? `Cuentas en simultáneo (-${descuentoLotePct}%) · ${fila.itemsCalculados[0].plataforma}`
+        : `${fila.itemsCalculados[0].cantidad.toLocaleString()} ${fila.itemsCalculados[0].nombre_publico} · ${fila.itemsCalculados[0].plataforma}`;
+      await client.query(
+        `INSERT INTO transactions (user_id, tipo, monto, saldo_resultante, referencia_orden, nota)
+         VALUES ($1, 'consumo', $2, $3, $4, $5)`,
+        [userId, -fila.costoFila, saldoCorriente, pedidoId, notaPedido]
+      );
+
+      pedidoIds.push(pedidoId);
+    }
+
+    await client.query('UPDATE wallets SET saldo_creditos = $1, actualizado_en = now() WHERE user_id = $2', [saldoCorriente, userId]);
+
+    await client.query('COMMIT');
+    return { pedidoIds, costoTotalLote, descuentoLotePct };
   } catch (err) {
     await client.query('ROLLBACK');
     throw err;
@@ -473,6 +593,7 @@ async function repetirItem(itemId, userId) {
 
 module.exports = {
   crearPedido,
+  crearPedidosEnLote,
   aplicarBundle,
   enviarPedidoAProveedor,
   reembolsarItem,
