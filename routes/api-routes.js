@@ -7,7 +7,7 @@ const router = express.Router();
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/comprobantes/' });
 const pool = require('../db');
-const { crearPedido, crearPedidosEnLote, aplicarBundle, enviarPedidoAProveedor, obtenerDescuentoNivel, aprobarRecargaManual, solicitarRefill, repetirItem } = require('../wallet');
+const { crearPedido, crearPedidosEnLote, aplicarBundle, enviarPedidoAProveedor, obtenerDescuentoNivel, aprobarRecargaManual, aprobarBonoReferidoManual, rechazarBonoReferido, solicitarRefill, repetirItem } = require('../wallet');
 const { verificarSesion, requiereAdmin } = require('../auth');
 
 // ---------------------------------------------
@@ -15,9 +15,16 @@ const { verificarSesion, requiereAdmin } = require('../auth');
 // ---------------------------------------------
 
 router.get('/me', verificarSesion, async (req, res) => {
-  const r = await pool.query('SELECT email, nombre, creado_en, es_admin FROM users WHERE id = $1', [req.userId]);
+  const r = await pool.query('SELECT email, nombre, creado_en, es_admin, codigo_referido FROM users WHERE id = $1', [req.userId]);
   if (r.rows.length === 0) return res.status(404).json({ error: 'Usuario no encontrado' });
-  res.json(r.rows[0]);
+
+  const referidosRes = await pool.query(
+    `SELECT COUNT(*) AS aprobados FROM bonos_referido WHERE referente_id = $1 AND estado = 'aprobado'`,
+    [req.userId]
+  );
+  const aprobados = parseInt(referidosRes.rows[0].aprobados);
+
+  res.json({ ...r.rows[0], referidos_aprobados: aprobados, creditos_ganados_por_referidos: aprobados * 500 });
 });
 
 router.get('/wallet', verificarSesion, async (req, res) => {
@@ -263,6 +270,34 @@ router.post('/admin/recargas/:id/rechazar', verificarSesion, requiereAdmin, asyn
     "UPDATE recargas_manuales SET estado = 'rechazado', revisado_por = $1, revisado_en = now() WHERE id = $2",
     [req.userId, req.params.id]
   );
+  res.json({ ok: true });
+});
+
+// Bonos de referido marcados "sospechoso" por procesarBonoReferido — un
+// admin decide si son de verdad dos personas distintas o la misma con dos cuentas.
+router.get('/admin/referidos/sospechosos', verificarSesion, requiereAdmin, async (req, res) => {
+  const r = await pool.query(
+    `SELECT b.id, b.motivo_sospecha, b.creado_en,
+            ur.email AS referente_email, uo.email AS referido_email, uo.ip_registro
+     FROM bonos_referido b
+     JOIN users ur ON ur.id = b.referente_id
+     JOIN users uo ON uo.id = b.referido_id
+     WHERE b.estado = 'sospechoso' ORDER BY b.creado_en ASC`
+  );
+  res.json(r.rows);
+});
+
+router.post('/admin/referidos/:id/aprobar', verificarSesion, requiereAdmin, async (req, res) => {
+  try {
+    await aprobarBonoReferidoManual(req.params.id, req.userId);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+router.post('/admin/referidos/:id/rechazar', verificarSesion, requiereAdmin, async (req, res) => {
+  await rechazarBonoReferido(req.params.id, req.userId);
   res.json({ ok: true });
 });
 

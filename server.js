@@ -18,6 +18,10 @@ process.on('unhandledRejection', (err) => {
 });
 
 const app = express();
+// Railway pone la app detrás de un proxy — sin esto, req.ip da la IP interna
+// del proxy (igual para todos los usuarios) en vez de la real del cliente.
+// Necesario para el rate limit de IA y para detectar registros duplicados.
+app.set('trust proxy', true);
 app.use(cors());
 // Límite subido de 100kb (default) a 10mb — Viralizame IA acepta capturas de
 // pantalla (perfil/publicación) en base64 dentro del body JSON.

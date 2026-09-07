@@ -484,6 +484,73 @@ async function actualizarEstadoAgregadoPedido(pedidoId) {
 /**
  * Acredita una recarga manual ya aprobada, usando el paquete (créditos con bono incluido).
  */
+// Programa de referidos: 500 créditos para el que refiere y 500 para el
+// referido, pagados solo en la PRIMERA recarga aprobada del referido (no al
+// registrarse) — así crear cuentas falsas cuesta dinero real, no es gratis.
+const BONO_REFERIDO = 500;
+// Más de esto en 24h para un mismo referente no se acredita solo — se deja
+// en revisión manual, igual que ya se hace con las recargas.
+const TOPE_BONOS_REFERENTE_24H = 5;
+
+async function procesarBonoReferido(client, userId) {
+  const conteoRes = await client.query(
+    "SELECT COUNT(*) FROM recargas_manuales WHERE user_id = $1 AND estado = 'aprobado'",
+    [userId]
+  );
+  if (parseInt(conteoRes.rows[0].count) !== 1) return; // no es su primera recarga aprobada
+
+  const userRes = await client.query('SELECT referido_por, ip_registro FROM users WHERE id = $1', [userId]);
+  const referenteId = userRes.rows[0]?.referido_por;
+  const ip = userRes.rows[0]?.ip_registro;
+  if (!referenteId) return; // esta cuenta no vino de un código de referido
+
+  const yaExiste = await client.query('SELECT id FROM bonos_referido WHERE referido_id = $1', [userId]);
+  if (yaExiste.rows.length > 0) return; // defensivo — no debería pasar dos veces
+
+  let motivoSospecha = null;
+
+  const tasaRes = await client.query(
+    `SELECT COUNT(*) FROM bonos_referido
+     WHERE referente_id = $1 AND estado = 'aprobado' AND creado_en > now() - interval '24 hours'`,
+    [referenteId]
+  );
+  if (parseInt(tasaRes.rows[0].count) >= TOPE_BONOS_REFERENTE_24H) {
+    motivoSospecha = `Más de ${TOPE_BONOS_REFERENTE_24H} referidos premiados en 24h para este referente`;
+  }
+
+  // Misma IP de registro que otro referido ya premiado del mismo referente —
+  // fuerte indicio de que es la misma persona con varias cuentas.
+  if (!motivoSospecha && ip) {
+    const ipRes = await client.query(
+      `SELECT 1 FROM bonos_referido b JOIN users u ON u.id = b.referido_id
+       WHERE b.referente_id = $1 AND b.estado = 'aprobado' AND u.ip_registro = $2 LIMIT 1`,
+      [referenteId, ip]
+    );
+    if (ipRes.rows.length > 0) motivoSospecha = 'Coincide la IP de registro con otro referido ya premiado de este referente';
+  }
+
+  if (motivoSospecha) {
+    await client.query(
+      `INSERT INTO bonos_referido (referente_id, referido_id, estado, motivo_sospecha) VALUES ($1, $2, 'sospechoso', $3)`,
+      [referenteId, userId, motivoSospecha]
+    );
+    return;
+  }
+
+  for (const beneficiarioId of [userId, referenteId]) {
+    const wRes = await client.query('SELECT saldo_creditos FROM wallets WHERE user_id = $1 FOR UPDATE', [beneficiarioId]);
+    const nuevoSaldoBono = parseFloat(wRes.rows[0].saldo_creditos) + BONO_REFERIDO;
+    await client.query('UPDATE wallets SET saldo_creditos = $1, actualizado_en = now() WHERE user_id = $2', [nuevoSaldoBono, beneficiarioId]);
+    const nota = beneficiarioId === userId ? 'Bono de bienvenida por código de referido' : 'Bono por invitar a un amigo';
+    await client.query(
+      `INSERT INTO transactions (user_id, tipo, monto, saldo_resultante, nota) VALUES ($1, 'bono_referido', $2, $3, $4)`,
+      [beneficiarioId, BONO_REFERIDO, nuevoSaldoBono, nota]
+    );
+  }
+
+  await client.query(`INSERT INTO bonos_referido (referente_id, referido_id, estado) VALUES ($1, $2, 'aprobado')`, [referenteId, userId]);
+}
+
 async function aprobarRecargaManual(recargaId, adminUserId) {
   const client = await pool.connect();
   try {
@@ -516,6 +583,8 @@ async function aprobarRecargaManual(recargaId, adminUserId) {
       [recarga.user_id, recarga.creditos_a_acreditar, nuevoSaldo, recargaId]
     );
 
+    await procesarBonoReferido(client, recarga.user_id);
+
     await client.query('COMMIT');
     return nuevoSaldo;
   } catch (err) {
@@ -524,6 +593,48 @@ async function aprobarRecargaManual(recargaId, adminUserId) {
   } finally {
     client.release();
   }
+}
+
+/**
+ * Un admin revisa un bono de referido marcado "sospechoso" (ver
+ * procesarBonoReferido) y decide si de verdad son dos personas distintas.
+ */
+async function aprobarBonoReferidoManual(bonoId, adminUserId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const bonoRes = await client.query('SELECT referente_id, referido_id, estado FROM bonos_referido WHERE id = $1 FOR UPDATE', [bonoId]);
+    const bono = bonoRes.rows[0];
+    if (!bono || bono.estado !== 'sospechoso') throw new Error('Bono no válido o ya procesado');
+
+    for (const beneficiarioId of [bono.referido_id, bono.referente_id]) {
+      const wRes = await client.query('SELECT saldo_creditos FROM wallets WHERE user_id = $1 FOR UPDATE', [beneficiarioId]);
+      const nuevoSaldoBono = parseFloat(wRes.rows[0].saldo_creditos) + BONO_REFERIDO;
+      await client.query('UPDATE wallets SET saldo_creditos = $1, actualizado_en = now() WHERE user_id = $2', [nuevoSaldoBono, beneficiarioId]);
+      const nota = beneficiarioId === bono.referido_id ? 'Bono de bienvenida por código de referido' : 'Bono por invitar a un amigo';
+      await client.query(
+        `INSERT INTO transactions (user_id, tipo, monto, saldo_resultante, nota) VALUES ($1, 'bono_referido', $2, $3, $4)`,
+        [beneficiarioId, BONO_REFERIDO, nuevoSaldoBono, nota]
+      );
+    }
+    await client.query(
+      `UPDATE bonos_referido SET estado = 'aprobado', revisado_por = $1, revisado_en = now() WHERE id = $2`,
+      [adminUserId, bonoId]
+    );
+    await client.query('COMMIT');
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+async function rechazarBonoReferido(bonoId, adminUserId) {
+  await pool.query(
+    `UPDATE bonos_referido SET estado = 'rechazado', revisado_por = $1, revisado_en = now() WHERE id = $2 AND estado = 'sospechoso'`,
+    [adminUserId, bonoId]
+  );
 }
 
 /**
@@ -598,6 +709,8 @@ module.exports = {
   enviarPedidoAProveedor,
   reembolsarItem,
   aprobarRecargaManual,
+  aprobarBonoReferidoManual,
+  rechazarBonoReferido,
   obtenerDescuentoNivel,
   actualizarEstadoAgregadoPedido,
   solicitarRefill,

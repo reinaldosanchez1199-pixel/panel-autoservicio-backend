@@ -12,11 +12,22 @@ const JWT_EXPIRA = '7d';
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // ---------------------------------------------
+// Resuelve un código de referido al id de su dueño — null si no viene, no
+// existe, o el código está mal formado. Nunca lanza (un código inválido
+// simplemente no liga el registro a ningún referente).
+// ---------------------------------------------
+async function buscarReferente(codigoReferido) {
+  if (!codigoReferido || typeof codigoReferido !== 'string') return null;
+  const r = await pool.query('SELECT id FROM users WHERE codigo_referido = $1', [codigoReferido.trim().toUpperCase()]);
+  return r.rows[0]?.id || null;
+}
+
+// ---------------------------------------------
 // Registro
 // ---------------------------------------------
 async function registrar(req, res) {
   try {
-    const { email, password, nombre } = req.body;
+    const { email, password, nombre, codigoReferido } = req.body;
     if (!email || !password || password.length < 8) {
       return res.status(400).json({ error: 'Email y password (mínimo 8 caracteres) son requeridos' });
     }
@@ -26,13 +37,14 @@ async function registrar(req, res) {
       return res.status(409).json({ error: 'Ese email ya está registrado' });
     }
 
+    const referenteId = await buscarReferente(codigoReferido);
     const hash = await bcrypt.hash(password, 12);
     const client = await pool.connect();
     try {
       await client.query('BEGIN');
       const userRes = await client.query(
-        'INSERT INTO users (email, password_hash, nombre) VALUES ($1, $2, $3) RETURNING id',
-        [email, hash, nombre || null]
+        'INSERT INTO users (email, password_hash, nombre, referido_por, ip_registro) VALUES ($1, $2, $3, $4, $5) RETURNING id',
+        [email, hash, nombre || null, referenteId, req.ip || null]
       );
       const userId = userRes.rows[0].id;
       // Crea el wallet en 0 automáticamente
@@ -89,7 +101,7 @@ async function login(req, res) {
 // ---------------------------------------------
 async function loginGoogle(req, res) {
   try {
-    const { credential } = req.body;
+    const { credential, codigoReferido } = req.body;
     if (!credential) return res.status(400).json({ error: 'Falta el token de Google' });
 
     const ticket = await googleClient.verifyIdToken({ idToken: credential, audience: process.env.GOOGLE_CLIENT_ID });
@@ -106,12 +118,13 @@ async function loginGoogle(req, res) {
       userId = user.id;
       esAdmin = user.es_admin;
     } else {
+      const referenteId = await buscarReferente(codigoReferido);
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
         const userRes = await client.query(
-          'INSERT INTO users (email, password_hash, nombre) VALUES ($1, NULL, $2) RETURNING id',
-          [email, nombre]
+          'INSERT INTO users (email, password_hash, nombre, referido_por, ip_registro) VALUES ($1, NULL, $2, $3, $4) RETURNING id',
+          [email, nombre, referenteId, req.ip || null]
         );
         userId = userRes.rows[0].id;
         await client.query('INSERT INTO wallets (user_id, saldo_creditos) VALUES ($1, 0)', [userId]);
