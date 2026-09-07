@@ -70,6 +70,18 @@ function requiereCompensacion(tipo) {
   return tipo === 'Seguidores';
 }
 
+// Interacciones "de publicación" — reciben un extra aleatorio (no un % fijo,
+// a diferencia de Seguidores) para que dos publicaciones con la misma compra
+// no queden con el numero exacto de interacciones, lo cual se ve artificial.
+const TIPOS_VARIACION = ['Likes', 'Reproducciones', 'Guardados', 'Compartidos', 'Reposts', 'Alcance + Impresiones'];
+function requiereVariacion(tipo) {
+  return TIPOS_VARIACION.includes(tipo);
+}
+// Entre 5% y 10%, distinto en cada pedido.
+function bonoVariacion() {
+  return 1 + (0.05 + Math.random() * 0.05);
+}
+
 /**
  * Calcula el % de descuento del cliente según su consumo histórico.
  */
@@ -223,10 +235,14 @@ async function enviarPedidoAProveedor(pedidoId) {
   for (const item of itemsRes.rows) {
     try {
       // Se envía un 10% extra sobre lo comprado (misma práctica que viralizame.com)
-      // para compensar caídas naturales — solo en seguidores/suscriptores, el
-      // resto de servicios son estables y no lo necesitan.
+      // para compensar caídas naturales — solo en seguidores/suscriptores. En
+      // likes/reproducciones/etc. se manda un extra aleatorio de 5-10% para
+      // que las interacciones de cada publicación no queden en un número
+      // exacto y sospechosamente idéntico entre publicaciones.
       const cantidadConBono = requiereCompensacion(item.tipo)
         ? Math.min(item.cantidad_max, Math.round(item.cantidad * 1.1))
+        : requiereVariacion(item.tipo)
+        ? Math.min(item.cantidad_max, Math.round(item.cantidad * bonoVariacion()))
         : item.cantidad;
       const resp = await fetch(item.api_url, {
         method: 'POST',
