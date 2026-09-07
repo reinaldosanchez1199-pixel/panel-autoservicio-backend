@@ -28,7 +28,7 @@ const PROVIDERS = [
 // igual hay que pedir el catálogo completo, pero se descarta todo lo que no
 // esté en esta lista antes de tocar la base de datos.
 const SERVICIOS_SEGUIDOS = {
-  1: [3493, 3494, 3495, 3497, 3498, 3766], // bestsmmprovider: seguidores latinos IG (gen/F/M), likes latinos IG (F/M), seguidores latinos tiktok
+  1: [3493, 3494, 3495, 3496, 3497, 3498, 3766], // bestsmmprovider: seguidores latinos IG (gen/F/M), likes latinos IG (gen/F/M), seguidores latinos tiktok
   2: [
     22533, 21709, 13409, 18580, 21386, 21372, 23629, 22911, 18658, 22304, 15595, // Instagram/TikTok (22533 likes universales, 21709 seguidores universales)
     23529, 23531, 5319, // Twitter: seguidores, likes, vistas
