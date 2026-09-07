@@ -82,6 +82,12 @@ function bonoVariacion() {
   return 1 + (0.05 + Math.random() * 0.05);
 }
 
+// Combo "impulsa tu publicación completa" — comprar estos 4 tipos juntos en el
+// mismo pedido da 15% de descuento (ver crearPedido). Reproducciones es
+// opcional: si se agrega, también recibe el 15%, pero no hace falta para
+// activar el combo.
+const TIPOS_COMBO_PUBLICACION = ['Likes', 'Guardados', 'Compartidos', 'Reposts'];
+
 /**
  * Calcula el % de descuento del cliente según su consumo histórico.
  */
@@ -149,8 +155,22 @@ async function crearPedido({ userId, linkCliente, items, bundleId = null }) {
         costo: costoConDescuento,
         plataforma: servicio.plataforma,
         nombre_publico: servicio.nombre_publico,
+        tipo: servicio.tipo,
       });
       costoTotal += costoConDescuento;
+    }
+
+    // Combo de publicación: si el pedido trae Likes + Guardados + Compartidos +
+    // Repost (Reproducciones es opcional y también entra al descuento si está),
+    // se premia con 15% adicional por comprar todo junto en vez de por separado.
+    const tiposPresentes = new Set(itemsCalculados.map((i) => i.tipo));
+    const esComboPublicacion = TIPOS_COMBO_PUBLICACION.every((t) => tiposPresentes.has(t));
+    if (esComboPublicacion) {
+      costoTotal = 0;
+      for (const item of itemsCalculados) {
+        item.costo *= 0.85;
+        costoTotal += item.costo;
+      }
     }
 
     if (saldoActual < costoTotal) throw new Error('Saldo insuficiente');
@@ -184,7 +204,9 @@ async function crearPedido({ userId, linkCliente, items, bundleId = null }) {
 
     // Nota descriptiva real (ej. "100 Likes Latinos Femeninos · Instagram") en vez de un
     // genérico "Nueva campaña" — el cliente necesita saber qué pidió en cada uno.
-    const notaPedido = itemsCalculados.length === 1
+    const notaPedido = esComboPublicacion
+      ? `Combo de publicación (-15%) · ${itemsCalculados[0].plataforma}`
+      : itemsCalculados.length === 1
       ? `${itemsCalculados[0].cantidad.toLocaleString()} ${itemsCalculados[0].nombre_publico} · ${itemsCalculados[0].plataforma}`
       : `${[...new Set(itemsCalculados.map((i) => i.plataforma))].join(' + ')} · ${itemsCalculados.length} servicios`;
     await client.query(
