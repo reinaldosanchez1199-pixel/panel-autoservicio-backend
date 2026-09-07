@@ -237,7 +237,7 @@ async function crearPedido({ userId, linkCliente, items, bundleId = null }) {
 // 10% adicional sobre el total — se calcula server-side igual que el combo de
 // publicación, nunca se confía en un porcentaje que mande el cliente.
 const MINIMO_CUENTAS_LOTE = 3;
-const DESCUENTO_LOTE_PCT = 10;
+const DESCUENTO_LOTE_PCT = 15;
 
 /**
  * Crea varios pedidos independientes (un link distinto por fila, ej. varias
