@@ -288,6 +288,14 @@ router.get('/admin/services/pendientes', verificarSesion, requiereAdmin, async (
   res.json(r.rows);
 });
 
+// Fuerza una sincronización de precios inmediata (el cron corre cada 4h) —
+// útil al agregar un servicio nuevo a SERVICIOS_SEGUIDOS y no querer esperar.
+router.post('/admin/sync/precios', verificarSesion, requiereAdmin, async (req, res) => {
+  const { sincronizarPrecios } = require('../sync');
+  await sincronizarPrecios();
+  res.json({ ok: true });
+});
+
 router.patch('/admin/services/:id', verificarSesion, requiereAdmin, async (req, res) => {
   const { nombrePublico, plataforma, tipo, margenMultiplicador, activo } = req.body;
   const servicioRes = await pool.query('SELECT costo_provider_por_1000 FROM services WHERE id = $1', [req.params.id]);

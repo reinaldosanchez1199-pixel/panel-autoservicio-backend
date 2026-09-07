@@ -30,7 +30,7 @@ const PROVIDERS = [
 const SERVICIOS_SEGUIDOS = {
   1: [3493, 3494, 3495, 3497, 3498, 3766], // bestsmmprovider: seguidores latinos IG (gen/F/M), likes latinos IG (F/M), seguidores latinos tiktok
   2: [
-    22533, 13409, 18580, 21386, 21372, 23629, 22911, 18658, 22304, 15595, // Instagram/TikTok (seguidores de Instagram se movió a bestsmmprovider)
+    22533, 21709, 13409, 18580, 21386, 21372, 23629, 22911, 18658, 22304, 15595, // Instagram/TikTok (22533 likes universales, 21709 seguidores universales)
     23529, 23531, 5319, // Twitter: seguidores, likes, vistas
     21539, 12188, 17089, // YouTube: suscriptores, vistas, likes
     17179, 17178, 21749, 21087, 22577, // Facebook: seg. perfil, seg. página, likes+seg. página, likes pub, vistas
