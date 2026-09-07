@@ -7,7 +7,7 @@ const router = express.Router();
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/comprobantes/' });
 const pool = require('../db');
-const { crearPedido, aplicarBundle, enviarPedidoAProveedor, obtenerDescuentoNivel, aprobarRecargaManual, solicitarRefill, repetirItem } = require('../wallet');
+const { crearPedido, crearPedidosEnLote, aplicarBundle, enviarPedidoAProveedor, obtenerDescuentoNivel, aprobarRecargaManual, solicitarRefill, repetirItem } = require('../wallet');
 const { verificarSesion, requiereAdmin } = require('../auth');
 
 // ---------------------------------------------
@@ -109,6 +109,23 @@ router.post('/orders', verificarSesion, async (req, res) => {
   try {
     const resultado = await crearPedido({ userId: req.userId, linkCliente, items });
     enviarPedidoAProveedor(resultado.pedidoId).catch((err) => console.error('Error al enviar pedido:', err));
+    res.json(resultado);
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Crear varios pedidos (uno por link, ej. varias cuentas) en una sola operación
+// atómica — 3 o más filas activan el descuento de lote (ver crearPedidosEnLote).
+// filas = [{ linkCliente, items: [{ serviceId, cantidad }] }, ...]
+router.post('/orders/lote', verificarSesion, async (req, res) => {
+  const { filas } = req.body;
+  if (!filas?.length) return res.status(400).json({ error: 'Faltan datos: filas[]' });
+  try {
+    const resultado = await crearPedidosEnLote({ userId: req.userId, filas });
+    for (const pedidoId of resultado.pedidoIds) {
+      enviarPedidoAProveedor(pedidoId).catch((err) => console.error('Error al enviar pedido del lote:', err));
+    }
     res.json(resultado);
   } catch (err) {
     res.status(400).json({ error: err.message });
