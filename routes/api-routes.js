@@ -308,25 +308,36 @@ router.post('/admin/sync/precios', verificarSesion, requiereAdmin, async (req, r
 });
 
 router.patch('/admin/services/:id', verificarSesion, requiereAdmin, async (req, res) => {
-  const { nombrePublico, plataforma, tipo, margenMultiplicador, activo, diasGarantia } = req.body;
-  const servicioRes = await pool.query('SELECT costo_provider_por_1000, margen_multiplicador FROM services WHERE id = $1', [req.params.id]);
-  const costo = parseFloat(servicioRes.rows[0].costo_provider_por_1000);
-  // margenMultiplicador es opcional — si no se manda (ej. solo se está
-  // actualizando dias_garantia), se conserva el margen/precio actuales en
-  // vez de recalcular con un valor undefined (eso ponía el precio en NaN).
-  const margenFinal = margenMultiplicador !== undefined ? parseFloat(margenMultiplicador) : parseFloat(servicioRes.rows[0].margen_multiplicador);
-  // Los créditos valen ~$0.01 c/u ($10 = 1000 créditos) — sin este factor
-  // el precio quedaba en escala de dólares, casi regalando el servicio.
-  const CREDITOS_POR_USD = 100;
-  const nuevoPrecio = costo * CREDITOS_POR_USD * margenFinal;
+  try {
+    const { nombrePublico, plataforma, tipo, margenMultiplicador, activo, diasGarantia } = req.body;
+    const servicioRes = await pool.query('SELECT costo_provider_por_1000, margen_multiplicador FROM services WHERE id = $1', [req.params.id]);
+    if (servicioRes.rows.length === 0) return res.status(404).json({ error: 'Servicio no encontrado' });
+    const costo = parseFloat(servicioRes.rows[0].costo_provider_por_1000);
+    // margenMultiplicador es opcional — si no se manda (ej. solo se está
+    // actualizando dias_garantia), se conserva el margen/precio actuales en
+    // vez de recalcular con un valor undefined (eso ponía el precio en NaN).
+    const margenFinal = margenMultiplicador !== undefined ? parseFloat(margenMultiplicador) : parseFloat(servicioRes.rows[0].margen_multiplicador);
+    // margen_multiplicador es NUMERIC(5,2) en la base — un costo del proveedor
+    // casi nulo puede pedir un margen absurdamente alto para llegar al precio
+    // deseado; se limita antes de llegar a la base para no tirar la conexión.
+    if (!Number.isFinite(margenFinal) || margenFinal <= 0 || margenFinal >= 1000) {
+      return res.status(400).json({ error: 'El margen debe ser un número mayor a 0 y menor a 1000' });
+    }
+    // Los créditos valen ~$0.01 c/u ($10 = 1000 créditos) — sin este factor
+    // el precio quedaba en escala de dólares, casi regalando el servicio.
+    const CREDITOS_POR_USD = 100;
+    const nuevoPrecio = costo * CREDITOS_POR_USD * margenFinal;
 
-  await pool.query(
-    `UPDATE services SET nombre_publico = COALESCE($1, nombre_publico), plataforma = COALESCE($2, plataforma),
-     tipo = COALESCE($3, tipo), margen_multiplicador = $4, precio_creditos_por_1000 = $5,
-     activo = COALESCE($6, activo), dias_garantia = COALESCE($7, dias_garantia) WHERE id = $8`,
-    [nombrePublico ?? null, plataforma ?? null, tipo ?? null, margenFinal, nuevoPrecio, activo ?? null, diasGarantia ?? null, req.params.id]
-  );
-  res.json({ ok: true });
+    await pool.query(
+      `UPDATE services SET nombre_publico = COALESCE($1, nombre_publico), plataforma = COALESCE($2, plataforma),
+       tipo = COALESCE($3, tipo), margen_multiplicador = $4, precio_creditos_por_1000 = $5,
+       activo = COALESCE($6, activo), dias_garantia = COALESCE($7, dias_garantia) WHERE id = $8`,
+      [nombrePublico ?? null, plataforma ?? null, tipo ?? null, margenFinal, nuevoPrecio, activo ?? null, diasGarantia ?? null, req.params.id]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // Crear/editar bundles desde el admin

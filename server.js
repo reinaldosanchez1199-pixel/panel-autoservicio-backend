@@ -9,6 +9,14 @@ const { registrar, login, loginGoogle } = require('./auth');
 const apiRoutes = require('./routes/api-routes');
 const { chat: chatIA, limitadorIA } = require('./ia');
 
+// Red de seguridad: un error de base de datos no capturado dentro de una ruta
+// async (ej. un valor fuera de rango) tumbaba TODO el servidor para TODOS los
+// clientes en simultáneo, en vez de fallar solo esa petición. Node solo mata
+// el proceso si no hay ningún listener de 'unhandledRejection'.
+process.on('unhandledRejection', (err) => {
+  console.error('Rechazo no manejado (el servidor sigue corriendo):', err);
+});
+
 const app = express();
 app.use(cors());
 // Límite subido de 100kb (default) a 10mb — Viralizame IA acepta capturas de
