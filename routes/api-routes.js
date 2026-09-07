@@ -309,18 +309,22 @@ router.post('/admin/sync/precios', verificarSesion, requiereAdmin, async (req, r
 
 router.patch('/admin/services/:id', verificarSesion, requiereAdmin, async (req, res) => {
   const { nombrePublico, plataforma, tipo, margenMultiplicador, activo, diasGarantia } = req.body;
-  const servicioRes = await pool.query('SELECT costo_provider_por_1000 FROM services WHERE id = $1', [req.params.id]);
+  const servicioRes = await pool.query('SELECT costo_provider_por_1000, margen_multiplicador FROM services WHERE id = $1', [req.params.id]);
   const costo = parseFloat(servicioRes.rows[0].costo_provider_por_1000);
+  // margenMultiplicador es opcional — si no se manda (ej. solo se está
+  // actualizando dias_garantia), se conserva el margen/precio actuales en
+  // vez de recalcular con un valor undefined (eso ponía el precio en NaN).
+  const margenFinal = margenMultiplicador !== undefined ? parseFloat(margenMultiplicador) : parseFloat(servicioRes.rows[0].margen_multiplicador);
   // Los créditos valen ~$0.01 c/u ($10 = 1000 créditos) — sin este factor
   // el precio quedaba en escala de dólares, casi regalando el servicio.
   const CREDITOS_POR_USD = 100;
-  const nuevoPrecio = costo * CREDITOS_POR_USD * parseFloat(margenMultiplicador);
+  const nuevoPrecio = costo * CREDITOS_POR_USD * margenFinal;
 
   await pool.query(
-    `UPDATE services SET nombre_publico = $1, plataforma = $2, tipo = $3,
-     margen_multiplicador = $4, precio_creditos_por_1000 = $5, activo = $6,
-     dias_garantia = COALESCE($7, dias_garantia) WHERE id = $8`,
-    [nombrePublico, plataforma, tipo, margenMultiplicador, nuevoPrecio, activo, diasGarantia ?? null, req.params.id]
+    `UPDATE services SET nombre_publico = COALESCE($1, nombre_publico), plataforma = COALESCE($2, plataforma),
+     tipo = COALESCE($3, tipo), margen_multiplicador = $4, precio_creditos_por_1000 = $5,
+     activo = COALESCE($6, activo), dias_garantia = COALESCE($7, dias_garantia) WHERE id = $8`,
+    [nombrePublico ?? null, plataforma ?? null, tipo ?? null, margenFinal, nuevoPrecio, activo ?? null, diasGarantia ?? null, req.params.id]
   );
   res.json({ ok: true });
 });
