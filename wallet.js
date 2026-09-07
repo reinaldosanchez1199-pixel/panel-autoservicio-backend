@@ -702,6 +702,50 @@ async function repetirItem(itemId, userId) {
   return resultado;
 }
 
+/**
+ * Un admin cancela un item que aún no se completó (ej. el proveedor está
+ * fallando y no vale la pena esperar) y le devuelve los créditos al cliente.
+ * Reusa reembolsarItem — misma lógica que el reembolso automático por falla.
+ */
+async function cancelarItemAdmin(itemId, motivo) {
+  const r = await pool.query('SELECT estado FROM order_items WHERE id = $1', [itemId]);
+  if (r.rows.length === 0) throw new Error('Item no encontrado');
+  if (!['pendiente', 'procesando'].includes(r.rows[0].estado)) {
+    throw new Error('Solo se puede cancelar un item pendiente o en proceso');
+  }
+  await reembolsarItem(itemId, motivo || 'Cancelado manualmente por administrador');
+}
+
+/**
+ * Ajuste manual de créditos (positivo o negativo) fuera del flujo normal de
+ * pedidos/recargas — ej. compensar a un cliente, o descontar el costo de un
+ * envío hecho a mano con otro proveedor cuando el servicio suscrito falla.
+ * El CHECK saldo_creditos >= 0 de la tabla wallets impide dejarlo en negativo.
+ */
+async function ajustarCreditosManual(userId, monto, motivo, adminUserId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const walletRes = await client.query('SELECT saldo_creditos FROM wallets WHERE user_id = $1 FOR UPDATE', [userId]);
+    if (walletRes.rows.length === 0) throw new Error('Cliente no encontrado');
+    const nuevoSaldo = parseFloat(walletRes.rows[0].saldo_creditos) + parseFloat(monto);
+    if (nuevoSaldo < 0) throw new Error('Ese ajuste dejaría el saldo del cliente en negativo');
+
+    await client.query('UPDATE wallets SET saldo_creditos = $1, actualizado_en = now() WHERE user_id = $2', [nuevoSaldo, userId]);
+    await client.query(
+      `INSERT INTO transactions (user_id, tipo, monto, saldo_resultante, nota) VALUES ($1, 'ajuste_manual', $2, $3, $4)`,
+      [userId, monto, nuevoSaldo, motivo || 'Ajuste manual de administrador']
+    );
+    await client.query('COMMIT');
+    return nuevoSaldo;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
 module.exports = {
   crearPedido,
   crearPedidosEnLote,
@@ -711,6 +755,8 @@ module.exports = {
   aprobarRecargaManual,
   aprobarBonoReferidoManual,
   rechazarBonoReferido,
+  cancelarItemAdmin,
+  ajustarCreditosManual,
   obtenerDescuentoNivel,
   actualizarEstadoAgregadoPedido,
   solicitarRefill,

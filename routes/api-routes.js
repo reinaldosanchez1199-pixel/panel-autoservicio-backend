@@ -7,7 +7,7 @@ const router = express.Router();
 const multer = require('multer');
 const upload = multer({ dest: 'uploads/comprobantes/' });
 const pool = require('../db');
-const { crearPedido, crearPedidosEnLote, aplicarBundle, enviarPedidoAProveedor, obtenerDescuentoNivel, aprobarRecargaManual, aprobarBonoReferidoManual, rechazarBonoReferido, solicitarRefill, repetirItem } = require('../wallet');
+const { crearPedido, crearPedidosEnLote, aplicarBundle, enviarPedidoAProveedor, obtenerDescuentoNivel, aprobarRecargaManual, aprobarBonoReferidoManual, rechazarBonoReferido, cancelarItemAdmin, ajustarCreditosManual, solicitarRefill, repetirItem } = require('../wallet');
 const { verificarSesion, requiereAdmin } = require('../auth');
 
 // ---------------------------------------------
@@ -278,7 +278,7 @@ router.post('/admin/recargas/:id/rechazar', verificarSesion, requiereAdmin, asyn
 router.get('/admin/clientes', verificarSesion, requiereAdmin, async (req, res) => {
   const { email } = req.query;
   const r = await pool.query(
-    `SELECT u.id, u.email, u.nombre, u.creado_en, u.creditos_consumidos_total,
+    `SELECT u.id, u.email, u.nombre, u.creado_en, u.creditos_consumidos_total, u.activo,
             w.saldo_creditos,
             COALESCE(r.total_recargado_usd, 0) AS total_recargado_usd,
             COALESCE(r.total_creditos_recargados, 0) AS total_creditos_recargados,
@@ -296,6 +296,41 @@ router.get('/admin/clientes', verificarSesion, requiereAdmin, async (req, res) =
     email ? [`%${email}%`] : []
   );
   res.json(r.rows);
+});
+
+router.post('/admin/clientes/:id/suspender', verificarSesion, requiereAdmin, async (req, res) => {
+  await pool.query('UPDATE users SET activo = false WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+router.post('/admin/clientes/:id/reactivar', verificarSesion, requiereAdmin, async (req, res) => {
+  await pool.query('UPDATE users SET activo = true WHERE id = $1', [req.params.id]);
+  res.json({ ok: true });
+});
+
+// Ajuste manual de créditos (positivo suma, negativo resta) — ej. compensar
+// al cliente o descontar el costo de un envío hecho a mano con otro proveedor.
+router.post('/admin/clientes/:id/ajustar-creditos', verificarSesion, requiereAdmin, async (req, res) => {
+  const { monto, motivo } = req.body;
+  if (monto === undefined || isNaN(parseFloat(monto)) || parseFloat(monto) === 0) {
+    return res.status(400).json({ error: 'Falta un monto válido (positivo para sumar, negativo para restar)' });
+  }
+  try {
+    const nuevoSaldo = await ajustarCreditosManual(req.params.id, parseFloat(monto), motivo, req.userId);
+    res.json({ ok: true, nuevoSaldo });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
+});
+
+// Cancela un item de pedido que aún no se completó y devuelve sus créditos.
+router.post('/admin/orders/items/:id/cancelar', verificarSesion, requiereAdmin, async (req, res) => {
+  try {
+    await cancelarItemAdmin(req.params.id, req.body?.motivo);
+    res.json({ ok: true });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // Bonos de referido marcados "sospechoso" por procesarBonoReferido — un
