@@ -36,7 +36,7 @@ router.get('/wallet', verificarSesion, async (req, res) => {
 
 router.get('/services', verificarSesion, async (req, res) => {
   const r = await pool.query(
-    `SELECT id, plataforma, tipo, nombre_publico, precio_creditos_por_1000, cantidad_min, cantidad_max
+    `SELECT id, plataforma, tipo, nombre_publico, precio_creditos_por_1000, cantidad_min, cantidad_max, dias_garantia
      FROM services WHERE activo = true ORDER BY plataforma, tipo`
   );
   res.json(r.rows);
@@ -288,6 +288,17 @@ router.get('/admin/services/pendientes', verificarSesion, requiereAdmin, async (
   res.json(r.rows);
 });
 
+// Catálogo activo completo con detalle de proveedor — para gestión desde admin
+// (el endpoint público /services nunca expone provider_id/provider_service_id).
+router.get('/admin/services', verificarSesion, requiereAdmin, async (req, res) => {
+  const r = await pool.query(
+    `SELECT id, provider_id, provider_service_id, plataforma, tipo, nombre_publico,
+            precio_creditos_por_1000, cantidad_min, cantidad_max, soporta_refill, dias_garantia
+     FROM services WHERE activo = true ORDER BY plataforma, tipo`
+  );
+  res.json(r.rows);
+});
+
 // Fuerza una sincronización de precios inmediata (el cron corre cada 4h) —
 // útil al agregar un servicio nuevo a SERVICIOS_SEGUIDOS y no querer esperar.
 router.post('/admin/sync/precios', verificarSesion, requiereAdmin, async (req, res) => {
@@ -297,7 +308,7 @@ router.post('/admin/sync/precios', verificarSesion, requiereAdmin, async (req, r
 });
 
 router.patch('/admin/services/:id', verificarSesion, requiereAdmin, async (req, res) => {
-  const { nombrePublico, plataforma, tipo, margenMultiplicador, activo } = req.body;
+  const { nombrePublico, plataforma, tipo, margenMultiplicador, activo, diasGarantia } = req.body;
   const servicioRes = await pool.query('SELECT costo_provider_por_1000 FROM services WHERE id = $1', [req.params.id]);
   const costo = parseFloat(servicioRes.rows[0].costo_provider_por_1000);
   // Los créditos valen ~$0.01 c/u ($10 = 1000 créditos) — sin este factor
@@ -307,8 +318,9 @@ router.patch('/admin/services/:id', verificarSesion, requiereAdmin, async (req, 
 
   await pool.query(
     `UPDATE services SET nombre_publico = $1, plataforma = $2, tipo = $3,
-     margen_multiplicador = $4, precio_creditos_por_1000 = $5, activo = $6 WHERE id = $7`,
-    [nombrePublico, plataforma, tipo, margenMultiplicador, nuevoPrecio, activo, req.params.id]
+     margen_multiplicador = $4, precio_creditos_por_1000 = $5, activo = $6,
+     dias_garantia = COALESCE($7, dias_garantia) WHERE id = $8`,
+    [nombrePublico, plataforma, tipo, margenMultiplicador, nuevoPrecio, activo, diasGarantia ?? null, req.params.id]
   );
   res.json({ ok: true });
 });
