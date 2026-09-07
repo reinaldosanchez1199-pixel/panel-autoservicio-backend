@@ -273,6 +273,31 @@ router.post('/admin/recargas/:id/rechazar', verificarSesion, requiereAdmin, asyn
   res.json({ ok: true });
 });
 
+// Detalle de clientes: saldo actual y cuánto ha recargado cada uno en total
+// (solo recargas aprobadas), para que el admin tenga visibilidad financiera.
+router.get('/admin/clientes', verificarSesion, requiereAdmin, async (req, res) => {
+  const { email } = req.query;
+  const r = await pool.query(
+    `SELECT u.id, u.email, u.nombre, u.creado_en, u.creditos_consumidos_total,
+            w.saldo_creditos,
+            COALESCE(r.total_recargado_usd, 0) AS total_recargado_usd,
+            COALESCE(r.total_creditos_recargados, 0) AS total_creditos_recargados,
+            COALESCE(r.cantidad_recargas, 0) AS cantidad_recargas
+     FROM users u
+     JOIN wallets w ON w.user_id = u.id
+     LEFT JOIN (
+       SELECT user_id, SUM(monto_declarado) AS total_recargado_usd,
+              SUM(creditos_a_acreditar) AS total_creditos_recargados, COUNT(*) AS cantidad_recargas
+       FROM recargas_manuales WHERE estado = 'aprobado' GROUP BY user_id
+     ) r ON r.user_id = u.id
+     WHERE u.es_admin = false ${email ? 'AND u.email ILIKE $1' : ''}
+     ORDER BY total_recargado_usd DESC NULLS LAST
+     LIMIT 100`,
+    email ? [`%${email}%`] : []
+  );
+  res.json(r.rows);
+});
+
 // Bonos de referido marcados "sospechoso" por procesarBonoReferido — un
 // admin decide si son de verdad dos personas distintas o la misma con dos cuentas.
 router.get('/admin/referidos/sospechosos', verificarSesion, requiereAdmin, async (req, res) => {
