@@ -4,6 +4,7 @@
 
 const bcrypt = require('bcrypt');
 const jwt = require('jsonwebtoken');
+const crypto = require('crypto');
 const { OAuth2Client } = require('google-auth-library');
 const pool = require('./db');
 
@@ -147,6 +148,63 @@ async function loginGoogle(req, res) {
 }
 
 // ---------------------------------------------
+// Recuperación de contraseña mediada por WhatsApp — no hay servicio de correo
+// configurado, así que el cliente pide el reset desde la app, un admin lo
+// verifica (por WhatsApp, como ya hace con las recargas) y genera una
+// contraseña temporal para pasarle. Nunca revela si el email existe o no.
+// ---------------------------------------------
+async function solicitarResetPassword(req, res) {
+  const { email } = req.body;
+  const RESPUESTA_GENERICA = { ok: true, mensaje: 'Si el correo existe, un administrador te contactará por WhatsApp para verificarte y darte acceso de nuevo.' };
+  if (!email) return res.status(400).json({ error: 'Falta el email' });
+
+  try {
+    const r = await pool.query('SELECT id FROM users WHERE email = $1 AND activo = true', [email]);
+    if (r.rows.length > 0) {
+      await pool.query('INSERT INTO solicitudes_reset_password (user_id) VALUES ($1)', [r.rows[0].id]);
+    }
+    res.json(RESPUESTA_GENERICA);
+  } catch (err) {
+    console.error('Error en /auth/olvide-password:', err.message);
+    res.status(500).json({ error: 'No se pudo procesar la solicitud' });
+  }
+}
+
+// Genera una contraseña temporal legible (ej. "VRL-7K2M9P") para relayar por
+// WhatsApp — no usa el generador random completo para que sea fácil de
+// dictar/copiar sin ambigüedad (sin 0/O ni 1/I).
+function generarPasswordTemporal() {
+  const alfabeto = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  let codigo = '';
+  for (let i = 0; i < 8; i++) codigo += alfabeto[crypto.randomInt(alfabeto.length)];
+  return `VRL-${codigo}`;
+}
+
+async function resolverSolicitudReset(solicitudId, adminUserId) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+    const r = await client.query('SELECT user_id, estado FROM solicitudes_reset_password WHERE id = $1 FOR UPDATE', [solicitudId]);
+    if (r.rows.length === 0 || r.rows[0].estado !== 'pendiente') throw new Error('Solicitud no válida o ya procesada');
+
+    const passwordTemporal = generarPasswordTemporal();
+    const hash = await bcrypt.hash(passwordTemporal, 12);
+    await client.query('UPDATE users SET password_hash = $1 WHERE id = $2', [hash, r.rows[0].user_id]);
+    await client.query(
+      "UPDATE solicitudes_reset_password SET estado = 'resuelto', resuelto_por = $1, resuelto_en = now() WHERE id = $2",
+      [adminUserId, solicitudId]
+    );
+    await client.query('COMMIT');
+    return passwordTemporal;
+  } catch (err) {
+    await client.query('ROLLBACK');
+    throw err;
+  } finally {
+    client.release();
+  }
+}
+
+// ---------------------------------------------
 // Middleware: valida el JWT y adjunta el userId a la request
 // ---------------------------------------------
 function verificarSesion(req, res, next) {
@@ -173,7 +231,7 @@ function requiereAdmin(req, res, next) {
   next();
 }
 
-module.exports = { registrar, login, loginGoogle, verificarSesion, requiereAdmin };
+module.exports = { registrar, login, loginGoogle, verificarSesion, requiereAdmin, solicitarResetPassword, resolverSolicitudReset };
 
 // ---------------------------------------------
 // Nota: agregar a schema.sql

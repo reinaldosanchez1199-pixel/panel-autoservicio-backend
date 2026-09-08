@@ -5,9 +5,20 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
-const { registrar, login, loginGoogle } = require('./auth');
+const rateLimit = require('express-rate-limit');
+const { registrar, login, loginGoogle, solicitarResetPassword } = require('./auth');
 const apiRoutes = require('./routes/api-routes');
 const { chat: chatIA, limitadorIA } = require('./ia');
+
+// Máximo 5 solicitudes de reset por IP cada 15 minutos — evita que alguien
+// use este endpoint para adivinar qué emails están registrados.
+const limitadorResetPassword = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 5,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Demasiadas solicitudes. Espera unos minutos e intenta de nuevo.' },
+});
 
 // Red de seguridad: un error de base de datos no capturado dentro de una ruta
 // async (ej. un valor fuera de rango) tumbaba TODO el servidor para TODOS los
@@ -31,6 +42,7 @@ app.use(express.json({ limit: '10mb' }));
 app.post('/auth/registro', registrar);
 app.post('/auth/login', login);
 app.post('/auth/google', loginGoogle);
+app.post('/auth/olvide-password', limitadorResetPassword, solicitarResetPassword);
 
 // Viralizame IA — pública (landing + panel), con rate limit propio.
 app.post('/ia/chat', limitadorIA, chatIA);

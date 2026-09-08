@@ -8,7 +8,7 @@ const multer = require('multer');
 const upload = multer({ dest: 'uploads/comprobantes/' });
 const pool = require('../db');
 const { crearPedido, crearPedidosEnLote, aplicarBundle, enviarPedidoAProveedor, obtenerDescuentoNivel, aprobarRecargaManual, aprobarBonoReferidoManual, rechazarBonoReferido, cancelarItemAdmin, ajustarCreditosManual, solicitarRefill, repetirItem } = require('../wallet');
-const { verificarSesion, requiereAdmin } = require('../auth');
+const { verificarSesion, requiereAdmin, resolverSolicitudReset } = require('../auth');
 
 // ---------------------------------------------
 // CLIENTE — cuenta y catálogo
@@ -359,6 +359,26 @@ router.post('/admin/referidos/:id/aprobar', verificarSesion, requiereAdmin, asyn
 router.post('/admin/referidos/:id/rechazar', verificarSesion, requiereAdmin, async (req, res) => {
   await rechazarBonoReferido(req.params.id, req.userId);
   res.json({ ok: true });
+});
+
+// Solicitudes de recuperación de contraseña (sin correo — se resuelven por
+// WhatsApp): el admin verifica al cliente y genera una contraseña temporal.
+router.get('/admin/solicitudes-reset', verificarSesion, requiereAdmin, async (req, res) => {
+  const r = await pool.query(
+    `SELECT s.id, s.creado_en, u.email
+     FROM solicitudes_reset_password s JOIN users u ON u.id = s.user_id
+     WHERE s.estado = 'pendiente' ORDER BY s.creado_en ASC`
+  );
+  res.json(r.rows);
+});
+
+router.post('/admin/solicitudes-reset/:id/resolver', verificarSesion, requiereAdmin, async (req, res) => {
+  try {
+    const passwordTemporal = await resolverSolicitudReset(req.params.id, req.userId);
+    res.json({ ok: true, passwordTemporal });
+  } catch (err) {
+    res.status(400).json({ error: err.message });
+  }
 });
 
 // Historial de pedidos de TODOS los clientes, para revisión o corrección
