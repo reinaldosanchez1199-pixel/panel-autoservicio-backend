@@ -579,7 +579,7 @@ async function aprobarRecargaManual(recargaId, adminUserId) {
     );
     await client.query(
       `INSERT INTO transactions (user_id, tipo, monto, saldo_resultante, referencia_comprobante, nota)
-       VALUES ($1, 'recarga_manual', $2, $3, $4, 'Recarga aprobada manualmente')`,
+       VALUES ($1, 'recarga_manual', $2, $3, $4, 'Recarga aprobada')`,
       [recarga.user_id, recarga.creditos_a_acreditar, nuevoSaldo, recargaId]
     );
 
