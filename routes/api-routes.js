@@ -291,7 +291,7 @@ router.get('/admin/clientes', verificarSesion, requiereAdmin, async (req, res) =
        FROM recargas_manuales WHERE estado = 'aprobado' GROUP BY user_id
      ) r ON r.user_id = u.id
      WHERE u.es_admin = false ${email ? 'AND u.email ILIKE $1' : ''}
-     ORDER BY total_recargado_usd DESC NULLS LAST
+     ORDER BY u.creado_en DESC
      LIMIT 100`,
     email ? [`%${email}%`] : []
   );
