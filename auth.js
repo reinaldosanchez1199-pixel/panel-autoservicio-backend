@@ -113,6 +113,7 @@ async function loginGoogle(req, res) {
     const existente = await pool.query('SELECT id, es_admin, activo FROM users WHERE email = $1', [email]);
 
     let userId, esAdmin;
+    let nuevo = false; // el frontend lo usa para contar el registro en el Pixel de Meta
     if (existente.rows.length > 0) {
       const user = existente.rows[0];
       if (!user.activo) return res.status(403).json({ error: 'Cuenta desactivada' });
@@ -131,6 +132,7 @@ async function loginGoogle(req, res) {
         await client.query('INSERT INTO wallets (user_id, saldo_creditos) VALUES ($1, 0)', [userId]);
         await client.query('COMMIT');
         esAdmin = false;
+        nuevo = true;
       } catch (err) {
         await client.query('ROLLBACK');
         throw err;
@@ -140,7 +142,7 @@ async function loginGoogle(req, res) {
     }
 
     const token = jwt.sign({ userId, esAdmin }, JWT_SECRET, { expiresIn: JWT_EXPIRA });
-    res.json({ token });
+    res.json({ token, nuevo });
   } catch (err) {
     console.error('Error en /auth/google:', err.message);
     res.status(401).json({ error: 'No se pudo verificar la cuenta de Google' });
