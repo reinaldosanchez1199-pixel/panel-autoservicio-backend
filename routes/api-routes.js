@@ -70,6 +70,21 @@ router.get('/paquetes-recarga', verificarSesion, async (req, res) => {
   res.json(r.rows);
 });
 
+// Datos para recibir el pago de cada método manual (correo de Zelle, wallet de
+// Binance, etc.). Viven en la variable de entorno DATOS_PAGO (JSON, ej.
+// {"Zelle":"Correo: x@y.com\nNombre: Fulano"}) y solo se entregan a clientes con
+// sesión: así no quedan públicos en el código de la web. El frontend los mete en
+// el mensaje de WhatsApp para que el cliente no tenga que esperar una respuesta.
+router.get('/datos-pago', verificarSesion, (req, res) => {
+  try {
+    const datos = JSON.parse(process.env.DATOS_PAGO || '{}');
+    res.json(datos && typeof datos === 'object' ? datos : {});
+  } catch {
+    console.error('DATOS_PAGO no es un JSON válido');
+    res.json({});
+  }
+});
+
 router.get('/niveles', verificarSesion, async (req, res) => {
   const r = await pool.query('SELECT nombre, minimo_consumido, descuento_pct FROM niveles ORDER BY orden');
   res.json(r.rows);
