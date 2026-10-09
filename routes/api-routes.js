@@ -85,6 +85,20 @@ router.get('/datos-pago', verificarSesion, (req, res) => {
   }
 });
 
+// Tasas USD -> moneda local para mostrar equivalentes (COP, CLP) en recargas.
+// Las controla el dueño con la variable TASAS_MONEDA (JSON, ej. {"COP":3300,"CLP":1000})
+// para fijar el monto que realmente debe enviar el cliente, sin depender de un
+// servicio externo de tipos de cambio.
+router.get('/tasas-moneda', verificarSesion, (req, res) => {
+  try {
+    const tasas = JSON.parse(process.env.TASAS_MONEDA || '{}');
+    res.json(tasas && typeof tasas === 'object' ? tasas : {});
+  } catch {
+    console.error('TASAS_MONEDA no es un JSON válido');
+    res.json({});
+  }
+});
+
 router.get('/niveles', verificarSesion, async (req, res) => {
   const r = await pool.query('SELECT nombre, minimo_consumido, descuento_pct FROM niveles ORDER BY orden');
   res.json(r.rows);
