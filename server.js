@@ -8,6 +8,7 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const { registrar, login, loginGoogle, solicitarResetPassword } = require('./auth');
 const apiRoutes = require('./routes/api-routes');
+const recargasRoutes = require('./routes/recargas-routes');
 const { chat: chatIA, limitadorIA } = require('./ia');
 
 // Máximo 5 solicitudes de reset por IP cada 15 minutos — evita que alguien
@@ -48,6 +49,7 @@ app.post('/auth/olvide-password', limitadorResetPassword, solicitarResetPassword
 app.post('/ia/chat', limitadorIA, chatIA);
 
 // Rutas protegidas (login requerido, definidas en routes/api-routes.js)
+app.use('/api', recargasRoutes);
 app.use('/api', apiRoutes);
 
 app.get('/health', (req, res) => res.json({ ok: true }));

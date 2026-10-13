@@ -296,7 +296,7 @@ router.post('/admin/recargas/:id/aprobar', verificarSesion, requiereAdmin, async
 
 router.post('/admin/recargas/:id/rechazar', verificarSesion, requiereAdmin, async (req, res) => {
   await pool.query(
-    "UPDATE recargas_manuales SET estado = 'rechazado', revisado_por = $1, revisado_en = now() WHERE id = $2",
+    "UPDATE recargas_manuales SET estado = 'rechazado', revisado_por = $1, revisado_en = now() WHERE id = $2 AND estado IN ('pendiente', 'pendiente_pago', 'en_verificacion')",
     [req.userId, req.params.id]
   );
   res.json({ ok: true });

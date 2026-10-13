@@ -17,7 +17,8 @@ const pool = new Pool({
   user: decodeURIComponent(url.username),
   password: decodeURIComponent(url.password),
   database: url.pathname.replace(/^\//, ''),
-  ssl: { rejectUnauthorized: false },
+  // Solo en desarrollo local (Postgres sin TLS); Neon siempre va con TLS.
+  ssl: ['localhost', '127.0.0.1'].includes(url.hostname) ? false : { rejectUnauthorized: false },
   connectionTimeoutMillis: 10000, // falla rápido en vez de colgarse si la red está inestable
 });
 

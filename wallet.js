@@ -561,7 +561,8 @@ async function aprobarRecargaManual(recargaId, adminUserId) {
       [recargaId]
     );
     const recarga = recargaRes.rows[0];
-    if (!recarga || recarga.estado !== 'pendiente') {
+    // 'pendiente' es el estado heredado; las nuevas pasan por pendiente_pago / en_verificacion.
+    if (!recarga || !['pendiente', 'pendiente_pago', 'en_verificacion'].includes(recarga.estado)) {
       await client.query('ROLLBACK');
       throw new Error('Recarga no válida o ya procesada');
     }
